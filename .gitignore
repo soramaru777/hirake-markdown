@@ -1,0 +1,12 @@
+# ビルド成果物
+bin/
+obj/
+publish/
+
+# Visual Studio / IDE
+.vs/
+*.user
+*.suo
+
+# 一時ファイル
+*.tmp

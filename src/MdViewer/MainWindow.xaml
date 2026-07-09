@@ -1,0 +1,83 @@
+<Window x:Class="MdViewer.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="MdViewer"
+        Height="800" Width="1100"
+        AllowDrop="True"
+        Drop="Window_Drop"
+        DragOver="Window_DragOver"
+        PreviewKeyDown="Window_PreviewKeyDown">
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- タブヘッダー（横スクロール可・単一行） -->
+        <ListBox x:Name="TabList"
+                 Grid.Row="0"
+                 ItemsSource="{Binding Tabs}"
+                 SelectionChanged="TabList_SelectionChanged"
+                 BorderThickness="0,0,0,1"
+                 BorderBrush="#DDDDDD"
+                 Background="#F3F3F3"
+                 ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                 ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                 KeyboardNavigation.DirectionalNavigation="Contained">
+            <ListBox.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <StackPanel Orientation="Horizontal" />
+                </ItemsPanelTemplate>
+            </ListBox.ItemsPanel>
+            <ListBox.ItemContainerStyle>
+                <Style TargetType="ListBoxItem">
+                    <EventSetter Event="MouseUp" Handler="TabItem_MouseUp" />
+                    <Setter Property="Padding" Value="0" />
+                    <Setter Property="Margin" Value="1,2,1,0" />
+                </Style>
+            </ListBox.ItemContainerStyle>
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <StackPanel Orientation="Horizontal"
+                                Margin="8,4,4,4"
+                                ToolTip="{Binding FilePath}">
+                        <TextBlock Text="{Binding FileName}"
+                                   VerticalAlignment="Center"
+                                   MaxWidth="240"
+                                   TextTrimming="CharacterEllipsis" />
+                        <Button Content="&#x2715;"
+                                Click="CloseTab_Click"
+                                Tag="{Binding}"
+                                Margin="6,0,0,0"
+                                Padding="4,0"
+                                FontSize="10"
+                                BorderThickness="0"
+                                Background="Transparent"
+                                Cursor="Hand"
+                                ToolTip="タブを閉じる" />
+                    </StackPanel>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+
+        <!-- WebView2 を常設ホストする領域（再親子化を避けるため） -->
+        <Grid x:Name="WebViewHost" Grid.Row="1" />
+
+        <!-- タブが無いときの案内 -->
+        <StackPanel x:Name="EmptyState"
+                    Grid.Row="1"
+                    HorizontalAlignment="Center"
+                    VerticalAlignment="Center">
+            <TextBlock Text="Markdown ファイルを開いてください"
+                       FontSize="18"
+                       Foreground="#888888"
+                       HorizontalAlignment="Center" />
+            <TextBlock Text="Ctrl+O で開く / ここにファイルをドラッグ＆ドロップ"
+                       FontSize="13"
+                       Foreground="#AAAAAA"
+                       Margin="0,10,0,0"
+                       HorizontalAlignment="Center" />
+        </StackPanel>
+    </Grid>
+</Window>

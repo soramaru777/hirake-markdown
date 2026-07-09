@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<base href="{{BASE}}">
+<title>{{TITLE}}</title>
+<link rel="stylesheet" href="https://assets.mdviewer/style.css">
+<link rel="stylesheet" href="https://assets.mdviewer/vendor/highlight-github.min.css">
+<script src="https://assets.mdviewer/vendor/highlight.min.js"></script>
+<script src="https://assets.mdviewer/vendor/mermaid.min.js"></script>
+</head>
+<body>
+
+<button id="toc-toggle" class="toc-toggle" type="button" aria-label="目次の表示切替" title="目次の表示切替">
+  <span class="toc-toggle-icon">&#9776;</span>
+</button>
+
+<nav id="toc-sidebar" class="toc-sidebar" aria-label="目次">
+  <div class="toc-sidebar-header">目次</div>
+  <div id="toc-content" class="toc-content"></div>
+</nav>
+
+<div id="search-bar" class="search-bar" role="search">
+  <input id="search-input" type="text" class="search-input" placeholder="ページ内を検索" autocomplete="off">
+  <span id="search-count" class="search-count">0/0</span>
+  <button id="search-prev" class="search-btn" type="button" aria-label="前へ" title="前へ (Shift+Enter)">&#8593;</button>
+  <button id="search-next" class="search-btn" type="button" aria-label="次へ" title="次へ (Enter)">&#8595;</button>
+  <button id="search-close" class="search-btn search-close" type="button" aria-label="閉じる" title="閉じる (Esc)">&#10005;</button>
+</div>
+
+<main id="main-content" class="main-content">
+  <article class="markdown-body">
+{{BODY}}
+  </article>
+</main>
+
+<script src="https://assets.mdviewer/viewer.js" defer></script>
+</body>
+</html>

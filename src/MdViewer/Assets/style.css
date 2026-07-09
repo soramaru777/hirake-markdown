@@ -1,0 +1,466 @@
+/* MdViewer - style.css
+   GitHub 風 Markdown 表示 + サイドバー目次 + ページ内検索バーのスタイル。
+   ライトテーマ固定。
+*/
+
+:root {
+  --mdv-text: #1f2328;
+  --mdv-text-muted: #59636e;
+  --mdv-border: #d1d9e0;
+  --mdv-border-muted: #e7ebef;
+  --mdv-bg: #ffffff;
+  --mdv-bg-inset: #f6f8fa;
+  --mdv-bg-sidebar: #f6f8fa;
+  --mdv-link: #0969da;
+  --mdv-accent: #0969da;
+  --mdv-code-bg: rgba(175, 184, 193, 0.2);
+  --mdv-mark-bg: #fff2ac;
+  --mdv-mark-current-bg: #ffb300;
+  --mdv-sidebar-width: 260px;
+  --mdv-sidebar-toggle-size: 34px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  font-family: -apple-system, "Segoe UI", "Yu Gothic UI", Meiryo, sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--mdv-text);
+  background-color: var(--mdv-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- レイアウト ---------- */
+
+.main-content {
+  margin-left: var(--mdv-sidebar-toggle-size);
+  transition: margin-left 0.15s ease;
+  min-height: 100vh;
+}
+
+body.toc-open .main-content {
+  margin-left: var(--mdv-sidebar-width);
+}
+
+.markdown-body {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 48px 32px 96px;
+}
+
+/* ---------- 目次サイドバー ---------- */
+
+.toc-toggle {
+  position: fixed;
+  top: 12px;
+  left: 8px;
+  width: var(--mdv-sidebar-toggle-size);
+  height: var(--mdv-sidebar-toggle-size);
+  z-index: 30;
+  border: 1px solid var(--mdv-border);
+  border-radius: 6px;
+  background: var(--mdv-bg);
+  color: var(--mdv-text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  padding: 0;
+}
+
+.toc-toggle:hover {
+  background: var(--mdv-bg-inset);
+  color: var(--mdv-text);
+}
+
+.toc-sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: var(--mdv-sidebar-width);
+  background: var(--mdv-bg-sidebar);
+  border-right: 1px solid var(--mdv-border);
+  overflow-y: auto;
+  transform: translateX(-100%);
+  transition: transform 0.15s ease;
+  z-index: 20;
+  padding-top: calc(var(--mdv-sidebar-toggle-size) + 20px);
+}
+
+body.toc-open .toc-sidebar {
+  transform: translateX(0);
+}
+
+.toc-sidebar-header {
+  position: absolute;
+  top: 12px;
+  left: 16px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--mdv-text-muted);
+}
+
+.toc-content {
+  padding: 0 8px 24px;
+}
+
+.toc-content ul {
+  list-style: none;
+  margin: 0;
+  padding-left: 0;
+}
+
+.toc-content ul ul {
+  padding-left: 14px;
+}
+
+.toc-content li {
+  margin: 0;
+}
+
+.toc-content a {
+  display: block;
+  padding: 5px 10px;
+  border-radius: 6px;
+  color: var(--mdv-text-muted);
+  text-decoration: none;
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.toc-content a:hover {
+  background: var(--mdv-border-muted);
+  color: var(--mdv-text);
+}
+
+.toc-content a.active {
+  background: rgba(9, 105, 218, 0.1);
+  color: var(--mdv-accent);
+  font-weight: 600;
+}
+
+.toc-content .toc-empty {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--mdv-text-muted);
+}
+
+/* ---------- 検索バー ---------- */
+
+.search-bar {
+  position: fixed;
+  top: 12px;
+  right: 16px;
+  z-index: 40;
+  display: none;
+  align-items: center;
+  gap: 6px;
+  background: var(--mdv-bg);
+  border: 1px solid var(--mdv-border);
+  border-radius: 8px;
+  padding: 6px 8px;
+  box-shadow: 0 4px 16px rgba(31, 35, 40, 0.15);
+}
+
+.search-bar.open {
+  display: flex;
+}
+
+.search-input {
+  width: 220px;
+  padding: 5px 8px;
+  border: 1px solid var(--mdv-border);
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--mdv-text);
+  outline: none;
+}
+
+.search-input:focus {
+  border-color: var(--mdv-accent);
+}
+
+.search-count {
+  min-width: 52px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--mdv-text-muted);
+  user-select: none;
+}
+
+.search-btn {
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--mdv-border);
+  border-radius: 6px;
+  background: var(--mdv-bg);
+  color: var(--mdv-text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  padding: 0;
+}
+
+.search-btn:hover {
+  background: var(--mdv-bg-inset);
+  color: var(--mdv-text);
+}
+
+.search-close {
+  margin-left: 2px;
+  border-color: transparent;
+}
+
+mark.mdv-search-hit {
+  background-color: var(--mdv-mark-bg);
+  color: inherit;
+  border-radius: 2px;
+}
+
+mark.mdv-search-hit.current {
+  background-color: var(--mdv-mark-current-bg);
+}
+
+/* ---------- GitHub 風 Markdown 本文 ---------- */
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+  font-weight: 600;
+  line-height: 1.25;
+  margin-top: 24px;
+  margin-bottom: 16px;
+}
+
+.markdown-body h1 {
+  font-size: 2em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--mdv-border-muted);
+}
+
+.markdown-body h2 {
+  font-size: 1.5em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--mdv-border-muted);
+}
+
+.markdown-body h3 {
+  font-size: 1.25em;
+}
+
+.markdown-body h4 {
+  font-size: 1em;
+}
+
+.markdown-body h5 {
+  font-size: 0.875em;
+}
+
+.markdown-body h6 {
+  font-size: 0.85em;
+  color: var(--mdv-text-muted);
+}
+
+.markdown-body p,
+.markdown-body blockquote,
+.markdown-body ul,
+.markdown-body ol,
+.markdown-body dl,
+.markdown-body table,
+.markdown-body pre,
+.markdown-body details {
+  margin-top: 0;
+  margin-bottom: 16px;
+}
+
+.markdown-body a {
+  color: var(--mdv-link);
+  text-decoration: none;
+}
+
+.markdown-body a:hover {
+  text-decoration: underline;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  padding-left: 2em;
+}
+
+.markdown-body li + li {
+  margin-top: 0.25em;
+}
+
+.markdown-body li.task-list-item {
+  list-style-type: none;
+}
+
+.markdown-body ul.contains-task-list {
+  padding-left: 1.4em;
+}
+
+.markdown-body input[type="checkbox"] {
+  margin: 0 0.35em 0.1em -1.4em;
+  vertical-align: middle;
+}
+
+.markdown-body blockquote {
+  padding: 0 1em;
+  color: var(--mdv-text-muted);
+  border-left: 0.25em solid var(--mdv-border);
+}
+
+.markdown-body blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-body hr {
+  height: 0.25em;
+  padding: 0;
+  margin: 24px 0;
+  background-color: var(--mdv-border-muted);
+  border: 0;
+}
+
+.markdown-body table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow: auto;
+  border-spacing: 0;
+  border-collapse: collapse;
+}
+
+.markdown-body table th,
+.markdown-body table td {
+  padding: 6px 13px;
+  border: 1px solid var(--mdv-border);
+}
+
+.markdown-body table th {
+  font-weight: 600;
+  background-color: var(--mdv-bg-inset);
+}
+
+.markdown-body table tr {
+  background-color: var(--mdv-bg);
+  border-top: 1px solid var(--mdv-border-muted);
+}
+
+.markdown-body table tr:nth-child(2n) {
+  background-color: var(--mdv-bg-inset);
+}
+
+.markdown-body img {
+  max-width: 100%;
+  box-sizing: border-box;
+  background-color: var(--mdv-bg);
+}
+
+.markdown-body code,
+.markdown-body tt {
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 0.9em;
+  padding: 0.2em 0.4em;
+  margin: 0;
+  background-color: var(--mdv-code-bg);
+  border-radius: 6px;
+  white-space: break-spaces;
+}
+
+.markdown-body pre {
+  padding: 16px;
+  overflow: auto;
+  font-size: 0.9em;
+  line-height: 1.45;
+  background-color: var(--mdv-bg-inset);
+  border-radius: 6px;
+}
+
+.markdown-body pre code,
+.markdown-body pre tt {
+  display: inline;
+  max-width: auto;
+  padding: 0;
+  margin: 0;
+  overflow: visible;
+  line-height: inherit;
+  word-wrap: normal;
+  background-color: transparent;
+  border: 0;
+  white-space: pre;
+}
+
+.markdown-body pre code.hljs {
+  padding: 0;
+}
+
+/* Mermaid 図 */
+.markdown-body .mermaid {
+  text-align: center;
+  margin-bottom: 16px;
+}
+
+.markdown-body .mermaid-error {
+  color: #cf222e;
+  background-color: #fff0ee;
+  border: 1px solid #ffc1bc;
+  border-radius: 6px;
+  padding: 12px;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 0.85em;
+  white-space: pre-wrap;
+}
+
+.markdown-body kbd {
+  display: inline-block;
+  padding: 3px 5px;
+  font: 11px Consolas, "Cascadia Mono", monospace;
+  line-height: 10px;
+  color: var(--mdv-text);
+  vertical-align: middle;
+  background-color: var(--mdv-bg-inset);
+  border: 1px solid var(--mdv-border);
+  border-bottom-color: var(--mdv-border);
+  border-radius: 6px;
+  box-shadow: inset 0 -1px 0 var(--mdv-border);
+}
+
+/* ---------- 印刷時 ---------- */
+
+@media print {
+  .toc-toggle,
+  .toc-sidebar,
+  .search-bar {
+    display: none !important;
+  }
+
+  .main-content {
+    margin-left: 0 !important;
+  }
+
+  .markdown-body {
+    max-width: none;
+    padding: 0;
+  }
+}
