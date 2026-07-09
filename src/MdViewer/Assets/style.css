@@ -143,6 +143,11 @@ body.toc-open .toc-sidebar {
   word-break: break-word;
 }
 
+/* マウスクリックではフォーカス枠を出さない（キーボード操作時のみ表示） */
+.toc-content a:focus:not(:focus-visible) {
+  outline: none;
+}
+
 .toc-content a:hover {
   background: var(--mdv-border-muted);
   color: var(--mdv-text);

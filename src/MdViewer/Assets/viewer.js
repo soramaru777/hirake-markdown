@@ -123,6 +123,25 @@
     tocContent.appendChild(root);
   }
 
+  // スムーススクロール中はスクロール連動の現在位置更新を止める。
+  // 止めないと、移動途中の位置で判定されてクリック項目とズレる。
+  var suppressScrollSync = false;
+  var suppressTimer = null;
+
+  function suppressScrollSyncDuringSmoothScroll() {
+    suppressScrollSync = true;
+    if (suppressTimer) clearTimeout(suppressTimer);
+    suppressTimer = setTimeout(function () { suppressScrollSync = false; }, 1000);
+    if ('onscrollend' in window) {
+      var onEnd = function () {
+        window.removeEventListener('scrollend', onEnd);
+        clearTimeout(suppressTimer);
+        suppressScrollSync = false;
+      };
+      window.addEventListener('scrollend', onEnd);
+    }
+  }
+
   function onTocClick(event) {
     var link = event.target.closest ? event.target.closest('a[data-target]') : null;
     if (!link) return;
@@ -131,6 +150,10 @@
     var targetId = link.dataset.target;
     var target = targetId ? document.getElementById(targetId) : null;
     if (!target) return;
+
+    // クリックした項目を即座にアクティブ化し、スクロール完了までズレた再判定をさせない。
+    setActiveHeading(targetId);
+    suppressScrollSyncDuringSmoothScroll();
 
     target.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
@@ -152,8 +175,11 @@
   function updateActiveHeadingFromScroll() {
     scrollTicking = false;
     if (!tocHeadings.length) return;
+    if (suppressScrollSync) return;
 
-    var probe = window.scrollY + 96; // 見出し検出のオフセット
+    // オフセットが大きいと、短いセクションの先頭にスクロールした時に
+    // 次の見出しが選ばれてしまうため、小さな余裕だけ持たせる。
+    var probe = window.scrollY + 12;
     var activeId = tocHeadings[0].id || null;
 
     for (var i = 0; i < tocHeadings.length; i++) {
