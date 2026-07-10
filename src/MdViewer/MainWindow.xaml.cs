@@ -136,6 +136,7 @@ public partial class MainWindow : Window, IDocumentTabHost
     private void UpdateEmptyState()
     {
         EmptyState.Visibility = Tabs.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        PrintButton.IsEnabled = Tabs.Count > 0;
     }
 
     // ---- タブ操作の UI イベント ---------------------------------------
@@ -145,6 +146,19 @@ public partial class MainWindow : Window, IDocumentTabHost
         if (sender is FrameworkElement fe && fe.Tag is DocumentTab tab)
         {
             CloseTab(tab);
+        }
+    }
+
+    private void PrintButton_Click(object sender, RoutedEventArgs e)
+    {
+        PrintActiveTab();
+    }
+
+    private void PrintActiveTab()
+    {
+        if (TabList.SelectedItem is DocumentTab tab)
+        {
+            tab.ShowPrintUI();
         }
     }
 
@@ -178,6 +192,10 @@ public partial class MainWindow : Window, IDocumentTabHost
                 break;
             case Key.O:
                 ShowOpenDialog();
+                e.Handled = true;
+                break;
+            case Key.P:
+                PrintActiveTab();
                 e.Handled = true;
                 break;
             case Key.Tab:

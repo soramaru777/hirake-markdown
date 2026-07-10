@@ -451,9 +451,42 @@ mark.mdv-search-hit.current {
   box-shadow: inset 0 -1px 0 var(--mdv-border);
 }
 
+/* ---------- 印刷プレビュー表示中（画面側の退避） ----------
+   WebView2 のプレビューはページのスクロールバー等を覆いきれないため、
+   プレビュー中はスクロールバーと固定UIを隠して背後のはみ出しを防ぐ。 */
+
+html.mdv-printing,
+html.mdv-printing body {
+  overflow: hidden !important;
+}
+
+html.mdv-printing .toc-toggle,
+html.mdv-printing .toc-sidebar,
+html.mdv-printing .search-bar {
+  display: none !important;
+}
+
+/* プレビューはスナップショット表示のため、背後の本文は隠してよい。
+   オーバーレイが覆いきれない縁を無地の白にする。 */
+html.mdv-printing .main-content {
+  visibility: hidden;
+}
+
 /* ---------- 印刷時 ---------- */
 
 @media print {
+  /* 画面側退避（mdv-printing）の overflow: hidden / visibility: hidden が
+     印刷内容に影響しないよう、印刷レイアウトでは必ず解除する
+     （画面側ルールより高い詳細度のセレクタで上書きする）。 */
+  html.mdv-printing,
+  html.mdv-printing body {
+    overflow: visible !important;
+  }
+
+  html.mdv-printing .main-content {
+    visibility: visible !important;
+  }
+
   .toc-toggle,
   .toc-sidebar,
   .search-bar {

@@ -194,6 +194,40 @@ public sealed class DocumentTab : IDisposable
         }
     }
 
+    // ---- 印刷 ---------------------------------------------------------
+
+    /// <summary>
+    /// ブラウザの印刷プレビュー（プリンタ選択・PDF保存可）を表示する。
+    /// viewer.js 側の __mdvPrint がスクロールバー等を退避してから window.print() を
+    /// 呼ぶ。未定義のページ（エラー表示等）では ShowPrintUI にフォールバックする。
+    /// </summary>
+    public async void ShowPrintUI()
+    {
+        var core = WebView.CoreWebView2;
+        if (core == null)
+        {
+            return;
+        }
+
+        try
+        {
+            string hasHelper = await core
+                .ExecuteScriptAsync("typeof window.__mdvPrint === 'function'")
+                .ConfigureAwait(true);
+            if (hasHelper == "true")
+            {
+                _ = core.ExecuteScriptAsync("window.__mdvPrint();");
+                return;
+            }
+        }
+        catch
+        {
+            // スクリプト実行に失敗した場合はフォールバックへ。
+        }
+
+        core.ShowPrintUI(CoreWebView2PrintDialogKind.Browser);
+    }
+
     // ---- 自動リロード -------------------------------------------------
 
     private void StartWatcher()

@@ -512,6 +512,45 @@
   }
 
   /* ==========================================================
+   * 印刷
+   * ========================================================== */
+
+  // WebView2 の印刷プレビューはページのスクロールバー等を覆いきれず、
+  // 背後のページが縁からはみ出して見える。プレビュー中だけ mdv-printing
+  // クラスでスクロールバーと固定UIを隠し、閉じたら復元する。
+  var printing = false;
+
+  function endPrinting() {
+    document.documentElement.classList.remove('mdv-printing');
+    printing = false;
+  }
+
+  function printDocument() {
+    if (printing) return;
+    printing = true;
+
+    document.documentElement.classList.add('mdv-printing');
+
+    // クラス変更の描画反映を待ってからプレビューを開く（2フレーム待ち）。
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        try {
+          // Chromium ではプレビューを閉じるまでここでブロックする。
+          window.print();
+        } finally {
+          endPrinting();
+        }
+      });
+    });
+  }
+
+  // window.print() がブロックしない実装でも確実に復元するための保険。
+  window.addEventListener('afterprint', endPrinting);
+
+  // ホスト（WPF 側の印刷ボタン / Ctrl+P）から呼び出すための公開関数。
+  window.__mdvPrint = printDocument;
+
+  /* ==========================================================
    * ショートカット転送
    * ========================================================== */
 
@@ -550,6 +589,13 @@
     if (!event.shiftKey && key === 'f') {
       event.preventDefault();
       openSearchBar();
+      return;
+    }
+
+    // ブラウザ標準の Ctrl+P を横取りし、UI退避つきの印刷処理へ差し替える。
+    if (!event.shiftKey && key === 'p') {
+      event.preventDefault();
+      printDocument();
       return;
     }
   }

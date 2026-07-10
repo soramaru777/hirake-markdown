@@ -14,14 +14,23 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- タブヘッダー（横スクロール可・単一行） -->
-        <ListBox x:Name="TabList"
-                 Grid.Row="0"
+        <!-- タブヘッダー（横スクロール可・単一行）＋右端の印刷ボタン -->
+        <Border Grid.Row="0"
+                BorderThickness="0,0,0,1"
+                BorderBrush="#DDDDDD"
+                Background="#F3F3F3">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <ListBox x:Name="TabList"
+                 Grid.Column="0"
                  ItemsSource="{Binding Tabs}"
                  SelectionChanged="TabList_SelectionChanged"
-                 BorderThickness="0,0,0,1"
-                 BorderBrush="#DDDDDD"
-                 Background="#F3F3F3"
+                 BorderThickness="0"
+                 Background="Transparent"
                  ScrollViewer.HorizontalScrollBarVisibility="Auto"
                  ScrollViewer.VerticalScrollBarVisibility="Disabled"
                  KeyboardNavigation.DirectionalNavigation="Contained">
@@ -59,7 +68,24 @@
                     </StackPanel>
                 </DataTemplate>
             </ListBox.ItemTemplate>
-        </ListBox>
+                </ListBox>
+
+                <Button x:Name="PrintButton"
+                        Grid.Column="1"
+                        Click="PrintButton_Click"
+                        Content="&#xE749;"
+                        FontFamily="Segoe MDL2 Assets"
+                        FontSize="14"
+                        Padding="8,4"
+                        Margin="4,2,6,2"
+                        VerticalAlignment="Center"
+                        BorderThickness="0"
+                        Background="Transparent"
+                        Cursor="Hand"
+                        IsEnabled="False"
+                        ToolTip="印刷 (Ctrl+P)" />
+            </Grid>
+        </Border>
 
         <!-- WebView2 を常設ホストする領域（再親子化を避けるため） -->
         <Grid x:Name="WebViewHost" Grid.Row="1" />
