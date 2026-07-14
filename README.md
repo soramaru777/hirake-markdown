@@ -90,3 +90,21 @@ register.ps1 が作成した ProgId・OpenWithProgIds のエントリを削除�
 - Windows 10 / Windows 11
 - .NET 10 Desktop Runtime
 - WebView2 Runtime（Windows 11 には標準搭載。Windows 10 では別途インストールが必要な場合があります）
+
+## ライセンス
+
+MdViewer は [MIT License](LICENSE) で公開されています。
+
+Copyright (c) 2026 soramaru777
+
+### 同梱・利用しているサードパーティライブラリ
+
+| ライブラリ | 用途 | ライセンス |
+| --- | --- | --- |
+| [Markdig](https://github.com/xoofx/markdig) | Markdown → HTML 変換 | BSD-2-Clause |
+| [Microsoft.Web.WebView2](https://learn.microsoft.com/microsoft-edge/webview2/) | HTML レンダリング（SDK） | Microsoft Software License Terms |
+| [highlight.js](https://github.com/highlightjs/highlight.js)（github / github-dark テーマ含む） | シンタックスハイライト | BSD-3-Clause |
+| [mermaid](https://github.com/mermaid-js/mermaid) | 図の描画 | MIT |
+| [KaTeX](https://github.com/KaTeX/KaTeX)（同梱フォント含む） | 数式レンダリング | MIT |
+
+highlight.js / mermaid / KaTeX は `src/MdViewer/Assets/vendor/` にミニファイ済みファイルを同梱しています。各ライセンスの全文はそれぞれのリンク先リポジトリを参照してください。
