@@ -7,7 +7,7 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Win32;
 
-namespace MdViewer;
+namespace Hirake;
 
 public partial class MainWindow : Window, IDocumentTabHost
 {
@@ -40,11 +40,11 @@ public partial class MainWindow : Window, IDocumentTabHost
         _assetsDirectory = Path.Combine(AppContext.BaseDirectory, "Assets");
         _tempDirectory = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "MdViewer",
+            "Hirake",
             "temp");
         _clipboardDirectory = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "MdViewer",
+            "Hirake",
             "clipboard");
 
         // 起動時に古いクリップボード一時ファイルを軽く掃除する。
@@ -156,7 +156,7 @@ public partial class MainWindow : Window, IDocumentTabHost
             {
                 MessageBox.Show(
                     ex.ToString(),
-                    "MdViewer - タブ初期化エラー",
+                    "Hirake - タブ初期化エラー",
                     MessageBoxButton.OK,
                     MessageBoxImage.Error);
             }
@@ -166,8 +166,8 @@ public partial class MainWindow : Window, IDocumentTabHost
     private void UpdateTitle()
     {
         Title = TabList.SelectedItem is DocumentTab tab
-            ? $"{tab.FileName} - MdViewer"
-            : "MdViewer";
+            ? $"{tab.FileName} - Hirake"
+            : "Hirake";
     }
 
     private void UpdateEmptyState()
@@ -254,7 +254,7 @@ public partial class MainWindow : Window, IDocumentTabHost
         {
             MessageBox.Show(
                 "PDF の書き出しに失敗しました。",
-                "MdViewer - PDF エクスポート",
+                "Hirake - PDF エクスポート",
                 MessageBoxButton.OK,
                 MessageBoxImage.Warning);
         }

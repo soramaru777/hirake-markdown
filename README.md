@@ -1,10 +1,10 @@
-# MdViewer
+# Hirake
 
 Windows 用の軽量な Markdown ビューアです。WPF + WebView2 で構築されており、Markdown ファイルをダブルクリックするだけで素早く閲覧できます。
 
 ## 概要
 
-MdViewer は、エディタでの編集を目的とせず「素早く正確に Markdown を表示すること」に特化したビューアアプリケーションです。GitHub 風のスタイルでシンタックスハイライトや mermaid 図を含む Markdown を、ネイティブアプリのように高速に表示します。
+Hirake は、エディタでの編集を目的とせず「素早く正確に Markdown を表示すること」に特化したビューアアプリケーションです。GitHub 風のスタイルでシンタックスハイライトや mermaid 図を含む Markdown を、ネイティブアプリのように高速に表示します。
 
 ## 機能一覧
 
@@ -32,30 +32,30 @@ MdViewer は、エディタでの編集を目的とせず「素早く正確に M
 .NET 10 SDK がインストールされた環境で、以下のコマンドを実行してください。
 
 ```powershell
-dotnet publish src/MdViewer -c Release -r win-x64 --self-contained false -o publish
+dotnet publish src/Hirake -c Release -r win-x64 --self-contained false -o publish
 ```
 
-ビルド成果物は `publish` フォルダに出力されます（`publish\MdViewer.exe`）。
+ビルド成果物は `publish` フォルダに出力されます（`publish\Hirake.exe`）。
 
 ## .md 関連付け手順
 
-`.md` / `.markdown` ファイルを MdViewer で開けるようにするには、`scripts/register.ps1` を実行します。管理者権限は不要です（現在のユーザー = HKCU にのみ登録します）。
+`.md` / `.markdown` ファイルを Hirake で開けるようにするには、`scripts/register.ps1` を実行します。管理者権限は不要です（現在のユーザー = HKCU にのみ登録します）。
 
 ```powershell
 # 既定の exe パス（publish または bin\Release）を自動検出して登録する場合
 .\scripts\register.ps1
 
 # exe のパスを明示的に指定する場合
-.\scripts\register.ps1 -ExePath "C:\Tools\MdViewer\MdViewer.exe"
+.\scripts\register.ps1 -ExePath "C:\Tools\Hirake\Hirake.exe"
 ```
 
 登録すると、以下が行われます。
 
-- `MdViewer.md` という ProgId を HKCU に登録
-- `.md` / `.markdown` の「プログラムから開く」候補に MdViewer を追加
-- `.md` の既定プログラムが未設定の場合のみ MdViewer を既定に設定（既に別アプリが既定になっている場合は上書きしません）
+- `Hirake.md` という ProgId を HKCU に登録
+- `.md` / `.markdown` の「プログラムから開く」候補に Hirake を追加
+- `.md` の既定プログラムが未設定の場合のみ Hirake を既定に設定（既に別アプリが既定になっている場合は上書きしません）
 
-> **注意**: Windows 11 では初回のみ、`.md` ファイルを右クリック →「プログラムから開く」→「別のプログラムを選択」から MdViewer を選び、「常にこのアプリを使う」にチェックを入れる操作が必要な場合があります。
+> **注意**: Windows 11 では初回のみ、`.md` ファイルを右クリック →「プログラムから開く」→「別のプログラムを選択」から Hirake を選び、「常にこのアプリを使う」にチェックを入れる操作が必要な場合があります。
 
 ## 関連付けの解除手順
 
@@ -65,7 +65,7 @@ dotnet publish src/MdViewer -c Release -r win-x64 --self-contained false -o publ
 .\scripts\unregister.ps1
 ```
 
-register.ps1 が作成した ProgId・OpenWithProgIds のエントリを削除します。`.md` の既定プログラムは、MdViewer 自身が設定した場合のみ削除され、他アプリが既定になっている場合は変更しません。
+register.ps1 が作成した ProgId・OpenWithProgIds のエントリを削除します。`.md` の既定プログラムは、Hirake 自身が設定した場合のみ削除され、他アプリが既定になっている場合は変更しません。
 
 ## キーボードショートカット
 
@@ -93,7 +93,7 @@ register.ps1 が作成した ProgId・OpenWithProgIds のエントリを削除�
 
 ## ライセンス
 
-MdViewer は [MIT License](LICENSE) で公開されています。
+Hirake は [MIT License](LICENSE) で公開されています。
 
 Copyright (c) 2026 soramaru777
 
@@ -107,4 +107,4 @@ Copyright (c) 2026 soramaru777
 | [mermaid](https://github.com/mermaid-js/mermaid) | 図の描画 | MIT |
 | [KaTeX](https://github.com/KaTeX/KaTeX)（同梱フォント含む） | 数式レンダリング | MIT |
 
-highlight.js / mermaid / KaTeX は `src/MdViewer/Assets/vendor/` にミニファイ済みファイルを同梱しています。各ライセンスの全文は [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) を参照してください。
+highlight.js / mermaid / KaTeX は `src/Hirake/Assets/vendor/` にミニファイ済みファイルを同梱しています。各ライセンスの全文は [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) を参照してください。

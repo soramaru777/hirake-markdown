@@ -1,6 +1,6 @@
 # Third-Party Notices
 
-MdViewer は以下のサードパーティソフトウェアを利用・同梱しています。各ソフトウェアの著作権は
+Hirake は以下のサードパーティソフトウェアを利用・同梱しています。各ソフトウェアの著作権は
 それぞれの権利者に帰属し、以下のライセンス条件に基づいて再配布されます。
 
 - [Markdig](#markdig) — BSD-2-Clause
@@ -45,7 +45,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ## highlight.js
 
 <https://github.com/highlightjs/highlight.js>
-（`src/MdViewer/Assets/vendor/highlight.min.js` および github / github-dark テーマ CSS として同梱。BSD-3-Clause）
+（`src/Hirake/Assets/vendor/highlight.min.js` および github / github-dark テーマ CSS として同梱。BSD-3-Clause）
 
 ```
 BSD 3-Clause License
@@ -82,7 +82,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ## mermaid
 
 <https://github.com/mermaid-js/mermaid>
-（`src/MdViewer/Assets/vendor/mermaid.min.js` として同梱。MIT License）
+（`src/Hirake/Assets/vendor/mermaid.min.js` として同梱。MIT License）
 
 ```
 MIT License
@@ -111,7 +111,7 @@ SOFTWARE.
 ## KaTeX
 
 <https://github.com/KaTeX/KaTeX>
-（`src/MdViewer/Assets/vendor/katex.min.js` / `katex.min.css` / `contrib/auto-render.min.js` /
+（`src/Hirake/Assets/vendor/katex.min.js` / `katex.min.css` / `contrib/auto-render.min.js` /
 `fonts/*.woff2` として同梱。MIT License）
 
 ```

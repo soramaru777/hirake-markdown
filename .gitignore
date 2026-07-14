@@ -13,3 +13,4 @@ publish/
 
 # 内部開発メモ（公開リポジトリには含めない）
 tasks/
+docs/local/

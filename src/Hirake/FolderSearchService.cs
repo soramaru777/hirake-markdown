@@ -1,7 +1,7 @@
 using System.IO;
 using System.Text;
 
-namespace MdViewer;
+namespace Hirake;
 
 /// <summary>検索結果 1 ヒット行。</summary>
 public sealed class SearchHit

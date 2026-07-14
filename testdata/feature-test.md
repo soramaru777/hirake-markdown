@@ -1,6 +1,6 @@
 ---
 title: 新機能テスト
-author: MdViewer
+author: Hirake
 date: 2026-07-13
 tags: [test, katex, mermaid]
 ---
@@ -33,7 +33,7 @@ public static string Render(string filePath, string assetsDirectory, string them
 
 ```mermaid
 flowchart LR
-    A[Markdown] --> B{MdViewer}
+    A[Markdown] --> B{Hirake}
     B --> C[HTML]
     B --> D[PDF]
 ```

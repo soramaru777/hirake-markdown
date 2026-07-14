@@ -1,4 +1,4 @@
-/* MdViewer - style.css
+/* Hirake - style.css
    GitHub 風 Markdown 表示 + サイドバー目次 + ページ内検索バーのスタイル。
    ライト／ダーク両テーマ対応（配色は CSS 変数で切り替える）。
    テーマは html[data-theme="light"|"dark"] で選択し、既定はライト。
