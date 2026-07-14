@@ -1,0 +1,20 @@
+# main ブランチへの PR は develop ブランチからのみ許可する
+# このチェックは main のルールセットで必須ステータスチェックに指定されている
+name: Enforce PR source branch
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  develop-only:
+    name: develop-only
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check source branch
+        run: |
+          if [ "${{ github.head_ref }}" != "develop" ]; then
+            echo "::error::main への PR は develop ブランチからのみ許可されています（現在: ${{ github.head_ref }}）"
+            exit 1
+          fi
+          echo "OK: develop からの PR です"
