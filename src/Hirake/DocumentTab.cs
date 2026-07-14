@@ -22,14 +22,17 @@ public interface IDocumentTabHost
     void ShortcutToggleSidebar();
     void ShortcutExportPdf();
     void ShortcutCycleTheme();
+    void ShortcutToggleGraphView();
     void OnTabZoomChanged(DocumentTab source, double zoomFactor);
 }
 
 /// <summary>
 /// 1 タブ = 1 ファイル。専用の WebView2 を保持し、レンダリング・自動リロード・
 /// リンク制御・スクロール位置復元・プロセス間ショートカット転送を担う。
+/// 文書以外の特殊タブ（グラフビュー等）は LoadContentAsync / StartWatcher を
+/// オーバーライドして実装する。
 /// </summary>
-public sealed class DocumentTab : IDisposable
+public class DocumentTab : IDisposable
 {
     private const string AssetsHost = "assets.hirake";
     private const string TempHost = "temp.hirake";
@@ -64,7 +67,7 @@ public sealed class DocumentTab : IDisposable
 
     public WebView2 WebView { get; }
     public string FilePath { get; }
-    public string FileName { get; }
+    public string FileName { get; protected set; }
 
     public DocumentTab(string filePath, IDocumentTabHost host, string assetsDirectory, string tempDirectory)
     {
@@ -233,34 +236,54 @@ public sealed class DocumentTab : IDisposable
         return tcs.Task;
     }
 
-    private async Task LoadContentAsync()
+    protected virtual Task LoadContentAsync()
     {
         if (_disposed)
         {
-            return;
+            return Task.CompletedTask;
         }
 
         if (!File.Exists(FilePath))
         {
             WebView.CoreWebView2.NavigateToString(
                 MarkdownRenderer.RenderMessage($"ファイルが見つかりません: {FilePath}"));
-            return;
+            return Task.CompletedTask;
         }
 
         string html;
         try
         {
-            _effectiveTheme = SettingsStore.GetEffectiveTheme(SettingsStore.Instance.Theme);
-            SetDefaultBackground(_effectiveTheme);
-            html = MarkdownRenderer.Render(FilePath, _assetsDirectory, _effectiveTheme);
+            string theme = RefreshEffectiveTheme();
+            html = MarkdownRenderer.Render(FilePath, _assetsDirectory, theme);
         }
         catch (Exception ex)
         {
             WebView.CoreWebView2.NavigateToString(
                 MarkdownRenderer.RenderMessage($"読み込みに失敗しました: {ex.Message}"));
-            return;
+            return Task.CompletedTask;
         }
 
+        NavigateHtml(html);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>設定から実効テーマを再取得し、既定背景色へ反映して返す。</summary>
+    protected string RefreshEffectiveTheme()
+    {
+        _effectiveTheme = SettingsStore.GetEffectiveTheme(SettingsStore.Instance.Theme);
+        SetDefaultBackground(_effectiveTheme);
+        return _effectiveTheme;
+    }
+
+    /// <summary>アセットフォルダ（テンプレート読込などに使用）。</summary>
+    protected string AssetsDirectory => _assetsDirectory;
+
+    /// <summary>
+    /// HTML を表示する。NavigateToString の約 2MB 制限を超える場合は
+    /// 一時ファイル + temp 仮想ホスト経由に自動で切り替える。
+    /// </summary>
+    protected void NavigateHtml(string html)
+    {
         int byteCount = Encoding.UTF8.GetByteCount(html);
         if (byteCount <= NavigateToStringByteLimit)
         {
@@ -434,7 +457,7 @@ public sealed class DocumentTab : IDisposable
 
     // ---- 自動リロード -------------------------------------------------
 
-    private void StartWatcher()
+    protected virtual void StartWatcher()
     {
         string? directory = Path.GetDirectoryName(FilePath);
         if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory))
@@ -658,6 +681,21 @@ public sealed class DocumentTab : IDisposable
                 return;
             }
 
+            // グラフビュー等からのファイルオープン要求（{type:'openFile', path}）。
+            if (type == "openFile")
+            {
+                if (root.TryGetProperty("path", out var pathEl)
+                    && pathEl.ValueKind == JsonValueKind.String)
+                {
+                    string? path = pathEl.GetString();
+                    if (!string.IsNullOrEmpty(path))
+                    {
+                        OpenInNewTab(path);
+                    }
+                }
+                return;
+            }
+
             if (type != "shortcut")
             {
                 return;
@@ -696,6 +734,9 @@ public sealed class DocumentTab : IDisposable
                     break;
                 case "cycleTheme":
                     _host.ShortcutCycleTheme();
+                    break;
+                case "toggleGraphView":
+                    _host.ShortcutToggleGraphView();
                     break;
             }
         }

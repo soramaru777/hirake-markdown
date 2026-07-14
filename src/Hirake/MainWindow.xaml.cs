@@ -95,6 +95,44 @@ public partial class MainWindow : Window, IDocumentTabHost
         UpdateEmptyState();
     }
 
+    // ---- ナレッジグラフ・ビュー ---------------------------------------
+
+    /// <summary>
+    /// アクティブタブのフォルダを起点にナレッジグラフ・ビューを開く。
+    /// 同一フォルダのグラフタブが既にあればアクティブ化のみ行う。
+    /// </summary>
+    private void OpenGraphView()
+    {
+        string? root = _currentRootFolder;
+        if (root == null && TabList.SelectedItem is DocumentTab active and not GraphTab)
+        {
+            root = Path.GetDirectoryName(active.FilePath);
+        }
+        if (string.IsNullOrEmpty(root) || !Directory.Exists(root))
+        {
+            return;
+        }
+
+        string fullRoot = Path.GetFullPath(root);
+        var existing = Tabs.OfType<GraphTab>().FirstOrDefault(
+            t => string.Equals(t.RootFolder, fullRoot, StringComparison.OrdinalIgnoreCase));
+        if (existing != null)
+        {
+            TabList.SelectedItem = existing;
+            return;
+        }
+
+        var tab = new GraphTab(fullRoot, this, _assetsDirectory, _tempDirectory);
+        tab.WebView.Visibility = Visibility.Collapsed;
+        WebViewHost.Children.Add(tab.WebView);
+        Tabs.Add(tab);
+        TabList.SelectedItem = tab;
+
+        UpdateEmptyState();
+    }
+
+    private void GraphButton_Click(object sender, RoutedEventArgs e) => OpenGraphView();
+
     // ---- タブを閉じる -------------------------------------------------
 
     private void CloseTab(DocumentTab tab)
@@ -428,6 +466,10 @@ public partial class MainWindow : Window, IDocumentTabHost
                 PrintActiveTab();
                 e.Handled = true;
                 break;
+            case Key.G:
+                OpenGraphView();
+                e.Handled = true;
+                break;
             case Key.Tab:
                 if (shift)
                 {
@@ -568,6 +610,8 @@ public partial class MainWindow : Window, IDocumentTabHost
     public void ShortcutToggleSidebar() => ToggleSidebar();
 
     public void ShortcutCycleTheme() => CycleTheme();
+
+    public void ShortcutToggleGraphView() => OpenGraphView();
 
     /// <summary>あるタブでズームが変わったら、他の全タブへ同じ倍率を反映する。</summary>
     public void OnTabZoomChanged(DocumentTab source, double zoomFactor)

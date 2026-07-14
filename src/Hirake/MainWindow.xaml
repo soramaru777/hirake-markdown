@@ -110,6 +110,20 @@
                             Orientation="Horizontal"
                             VerticalAlignment="Center">
 
+                    <Button x:Name="GraphButton"
+                            Click="GraphButton_Click"
+                            Content="&#xE9D2;"
+                            FontFamily="Segoe MDL2 Assets"
+                            FontSize="14"
+                            Padding="8,4"
+                            Margin="4,2,0,2"
+                            VerticalAlignment="Center"
+                            BorderThickness="0"
+                            Background="Transparent"
+                            Foreground="{DynamicResource ChromeText}"
+                            Cursor="Hand"
+                            ToolTip="ナレッジグラフ (Ctrl+G)" />
+
                     <Button x:Name="ExportPdfButton"
                             Click="ExportPdfButton_Click"
                             Content="&#xE8A5;"

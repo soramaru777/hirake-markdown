@@ -31,8 +31,8 @@ public sealed class SearchFileResult
 public static class FolderSearchService
 {
     // 走査上限（過剰なコストを避けるためのガード）。
-    private const int MaxFiles = 500;
-    private const long MaxFileBytes = 2L * 1024 * 1024; // 2MB 超はスキップ
+    internal const int MaxFiles = 500;
+    internal const long MaxFileBytes = 2L * 1024 * 1024; // 2MB 超はスキップ
     private const int MaxHitsPerFilePreview = 3;        // ファイルごとのプレビュー行数
     private const int PreviewMaxLength = 100;           // プレビュー 1 行の最大文字数
     private const int MaxDirectoryDepth = 32;
@@ -75,7 +75,7 @@ public static class FolderSearchService
     }
 
     /// <summary>隠しフォルダ・node_modules・.git をスキップしつつ Markdown を再帰列挙する。</summary>
-    private static IEnumerable<string> EnumerateMarkdownFiles(string root, CancellationToken token)
+    internal static IEnumerable<string> EnumerateMarkdownFiles(string root, CancellationToken token)
     {
         var stack = new Stack<(string Dir, int Depth)>();
         stack.Push((root, 0));
