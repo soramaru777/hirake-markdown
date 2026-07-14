@@ -4,11 +4,30 @@
  * 役割:
  *   - 目次サイドバーの生成・開閉・現在地ハイライト
  *   - ページ内検索（Ctrl+F）
- *   - シンタックスハイライト（hljs）と Mermaid 図の描画
- *   - WPF 側へのショートカット転送（Ctrl+W / Ctrl+Tab / Ctrl+Shift+Tab / Ctrl+O）
+ *   - シンタックスハイライト（hljs）・Mermaid 図・KaTeX 数式の描画
+ *   - ライト／ダークテーマ切替（hljs CSS 切替 + Mermaid 再描画）
+ *   - スクロール位置のホストへの通知（デバウンス）と復元
+ *   - WPF 側へのショートカット転送
+ *
+ * ホスト（WPF）との契約:
+ *   WebView→ホスト postMessage:
+ *     { type:'scroll', y:<number> }                 スクロール位置（300ms デバウンス）
+ *     { type:'shortcut', action:'closeTab' }         Ctrl+W
+ *     { type:'shortcut', action:'nextTab' }          Ctrl+Tab
+ *     { type:'shortcut', action:'prevTab' }          Ctrl+Shift+Tab
+ *     { type:'shortcut', action:'openFile' }         Ctrl+O
+ *     { type:'shortcut', action:'quickPaste' }       Ctrl+Shift+V
+ *     { type:'shortcut', action:'globalSearch' }     Ctrl+Shift+F
+ *     { type:'shortcut', action:'toggleSidebar' }    Ctrl+B
+ *     { type:'shortcut', action:'exportPdf' }        Ctrl+Shift+E
+ *     { type:'shortcut', action:'cycleTheme' }       Ctrl+Shift+D
+ *   ホスト→WebView 公開関数:
+ *     window.__mdvSetTheme('light'|'dark')  テーマ切替（スクロールは動かさない）
+ *     window.__mdvRestoreScroll(y)          スクロール位置の復元（Mermaid 描画後にも再適用）
+ *     window.__mdvPrint()                   印刷（UI 退避つき）
  *
  * 注意:
- *   - vendor（hljs / mermaid）が読み込めていなくても全体が死なないよう、
+ *   - vendor（hljs / mermaid / KaTeX）が読み込めていなくても全体が死なないよう、
  *     各機能は typeof チェック + try/catch でガードしてある。
  *   - ページ読み込み時に勝手にスクロール位置を変更しない
  *     （URL ハッシュがある場合のみブラウザ標準の挙動に任せる）。
@@ -70,6 +89,22 @@
   var lastActiveHeadingId = null;
   var scrollTicking = false;
 
+  // 見出しの表示テキストを取得する。KaTeX 描画済みの見出しは .katex-mathml 内に
+  // LaTeX ソース（MathML）を持つため、そのまま textContent を取ると目次が二重化けする。
+  // クローンから .katex-mathml を除去し、描画済みグリフ側のテキストだけを拾う。
+  function headingText(heading) {
+    try {
+      var clone = heading.cloneNode(true);
+      var mathml = clone.querySelectorAll ? clone.querySelectorAll('.katex-mathml') : [];
+      Array.prototype.forEach.call(mathml, function (el) {
+        if (el.parentNode) el.parentNode.removeChild(el);
+      });
+      return clone.textContent;
+    } catch (err) {
+      return heading.textContent;
+    }
+  }
+
   function buildToc() {
     if (!article || !tocContent || !tocToggle) return;
 
@@ -101,7 +136,7 @@
 
       var li = document.createElement('li');
       var a = document.createElement('a');
-      a.textContent = heading.textContent;
+      a.textContent = headingText(heading);
 
       if (heading.id) {
         a.href = '#' + heading.id;
@@ -434,6 +469,34 @@
    * Mermaid 図の描画
    * ========================================================== */
 
+  // 変換済み Mermaid ノードを保持し、テーマ切替時に元ソースから再描画する。
+  var mermaidNodes = [];
+  var mermaidIdCounter = 0;
+  var mermaidPending = 0;
+  var mermaidSettledCallbacks = [];
+
+  function isDarkTheme() {
+    return document.documentElement.getAttribute('data-theme') === 'dark';
+  }
+
+  // Mermaid の全描画が完了（保留 0）したら、待機中のコールバックを呼ぶ。
+  function notifyMermaidSettled() {
+    var cbs = mermaidSettledCallbacks;
+    mermaidSettledCallbacks = [];
+    cbs.forEach(function (cb) {
+      try { cb(); } catch (e) { /* 個別コールバックの失敗は無視 */ }
+    });
+  }
+
+  // Mermaid の描画完了後（保留が無ければ次フレーム）に一度だけ cb を呼ぶ。
+  function onMermaidSettled(cb) {
+    if (mermaidPending <= 0) {
+      window.requestAnimationFrame(cb);
+    } else {
+      mermaidSettledCallbacks.push(cb);
+    }
+  }
+
   function convertMermaidBlocks() {
     if (!article) return [];
 
@@ -445,13 +508,18 @@
       if (!code) return;
       if (!/language-mermaid/.test(code.className || '')) return;
 
+      var source = code.textContent;
       var div = document.createElement('div');
       div.className = 'mermaid';
-      div.textContent = code.textContent;
+      div.textContent = source;
+      // テーマ切替時の再描画に備え、元ソースを保持しておく。
+      div._mdvMermaidSource = source;
       pre.parentNode.replaceChild(div, pre);
       mermaidDivs.push(div);
     });
 
+    // 描画対象をモジュール側にも記録する（テーマ切替で再利用）。
+    mermaidNodes = mermaidDivs;
     return mermaidDivs;
   }
 
@@ -466,16 +534,36 @@
     if (typeof mermaid === 'undefined' || !nodes || !nodes.length) return;
 
     try {
-      mermaid.initialize({ startOnLoad: false, securityLevel: 'loose' });
+      // テーマに追従（dark / default）。initialize は再描画のたびに呼んでよい。
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: 'loose',
+        theme: isDarkTheme() ? 'dark' : 'default'
+      });
     } catch (err) {
       // initialize に失敗しても個別描画は試みる。
     }
 
-    var idCounter = 0;
-
     nodes.forEach(function (node) {
-      var source = node.textContent;
-      var renderId = 'mdv-mermaid-' + (idCounter++);
+      // 保持した元ソースを優先（再描画時は innerHTML が SVG に置換済みのため）。
+      var source = node._mdvMermaidSource != null ? node._mdvMermaidSource : node.textContent;
+      if (source == null) return;
+
+      // 再描画に備えてエラー状態をリセットする。
+      node.className = 'mermaid';
+
+      var renderId = 'mdv-mermaid-' + (mermaidIdCounter++);
+      mermaidPending++;
+      var settled = false;
+      var settle = function () {
+        if (settled) return;
+        settled = true;
+        mermaidPending--;
+        if (mermaidPending <= 0) {
+          mermaidPending = 0;
+          notifyMermaidSettled();
+        }
+      };
 
       try {
         var maybePromise = mermaid.render(renderId, source);
@@ -484,17 +572,21 @@
           maybePromise.then(
             function (result) {
               applyMermaidResult(node, result);
+              settle();
             },
             function (err) {
               showMermaidError(node, err);
+              settle();
             }
           );
         } else {
           // 古い同期 API のフォールバック。
           applyMermaidResult(node, maybePromise);
+          settle();
         }
       } catch (err) {
         showMermaidError(node, err);
+        settle();
       }
     });
   }
@@ -510,6 +602,135 @@
       showMermaidError(node, err);
     }
   }
+
+  /* ==========================================================
+   * KaTeX 数式の描画
+   * ========================================================== */
+
+  // Markdig(math 拡張)は \(...\) / \[...\] を出力するため、
+  // 対応するデリミタで本文全体を走査して描画する。
+  // KaTeX は currentColor 基準なのでテーマ切替でも本文色を継承する。
+  function renderMath() {
+    if (typeof renderMathInElement === 'undefined' || !article) return;
+    try {
+      renderMathInElement(article, {
+        delimiters: [
+          { left: '$$', right: '$$', display: true },
+          { left: '\\[', right: '\\]', display: true },
+          { left: '\\(', right: '\\)', display: false }
+        ],
+        throwOnError: false,
+        ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code']
+      });
+    } catch (err) {
+      // 数式描画の失敗が他の初期化を止めないようにする。
+    }
+  }
+
+  /* ==========================================================
+   * テーマ切替（ホスト公開）
+   * ========================================================== */
+
+  function setHljsTheme(dark) {
+    var light = document.getElementById('hljs-light');
+    var darkCss = document.getElementById('hljs-dark');
+    if (light) light.disabled = dark;
+    if (darkCss) darkCss.disabled = !dark;
+  }
+
+  // ホストから呼ばれるテーマ切替。data-theme と hljs CSS を切替え、
+  // Mermaid を全図再描画する。スクロール位置は動かさない。
+  function setTheme(theme) {
+    var dark = theme === 'dark';
+    document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+    setHljsTheme(dark);
+    safeRun(function () {
+      renderMermaidNodes(mermaidNodes);
+    });
+    // KaTeX / hljs は CSS(currentColor / テーマ CSS)追従のため再描画不要。
+  }
+
+  window.__mdvSetTheme = setTheme;
+
+  /* ==========================================================
+   * スクロール位置の通知・復元（ホスト連携）
+   * ========================================================== */
+
+  var scrollReportTimer = null;
+
+  // スクロール位置を 300ms デバウンスしてホストへ通知する。
+  function onScrollForHost() {
+    if (scrollReportTimer) clearTimeout(scrollReportTimer);
+    scrollReportTimer = setTimeout(function () {
+      scrollReportTimer = null;
+      postToHost({ type: 'scroll', y: window.scrollY });
+    }, 300);
+  }
+
+  function setupScrollReporting() {
+    window.addEventListener('scroll', onScrollForHost, { passive: true });
+  }
+
+  // ホストから呼ばれるスクロール復元。即座に scrollTo し、
+  // Mermaid 描画完了（レイアウト変動後）にもう一度適用する。
+  // ただしその間にユーザーが手動スクロールしたら再適用しない。
+  function restoreScroll(y) {
+    safeRun(function () {
+      var target = (typeof y === 'number' && isFinite(y)) ? y : 0;
+      window.scrollTo(0, target);
+
+      var cancelled = false;
+      var done = false;
+      var timeoutId = null;
+
+      function cleanup() {
+        window.removeEventListener('wheel', onUserScroll);
+        window.removeEventListener('touchstart', onUserScroll);
+        window.removeEventListener('mousedown', onUserScroll);
+        window.removeEventListener('keydown', onUserKey);
+        if (timeoutId !== null) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+      }
+      function onUserScroll() {
+        cancelled = true;
+        cleanup();
+      }
+      function onUserKey(e) {
+        var k = e.key;
+        if (k === 'ArrowUp' || k === 'ArrowDown' || k === 'PageUp' ||
+            k === 'PageDown' || k === 'Home' || k === 'End' ||
+            k === ' ' || k === 'Spacebar') {
+          onUserScroll();
+        }
+      }
+
+      // 再適用 + cleanup を一度だけ実行する。onMermaidSettled とタイムアウトの
+      // どちらか先着で発火する（mermaid の Promise が settle しない場合の保険）。
+      function reapplyOnce() {
+        if (done) return;
+        done = true;
+        if (!cancelled) {
+          window.scrollTo(0, target);
+        }
+        cleanup();
+      }
+
+      window.addEventListener('wheel', onUserScroll, { passive: true });
+      window.addEventListener('touchstart', onUserScroll, { passive: true });
+      window.addEventListener('mousedown', onUserScroll);
+      window.addEventListener('keydown', onUserKey);
+
+      // Mermaid 描画後（レイアウト確定後）に一度だけ再適用する。
+      onMermaidSettled(reapplyOnce);
+
+      // mermaid の Promise が settle しない場合に備えた 5 秒の保険。
+      timeoutId = setTimeout(reapplyOnce, 5000);
+    });
+  }
+
+  window.__mdvRestoreScroll = restoreScroll;
 
   /* ==========================================================
    * 印刷
@@ -574,6 +795,41 @@
 
     var key = (event.key || '').toLowerCase();
 
+    // --- Ctrl+Shift+* 系（ホストへ転送） ---
+    if (event.shiftKey) {
+      if (key === 'v') {
+        event.preventDefault();
+        postToHost({ type: 'shortcut', action: 'quickPaste' });
+        return;
+      }
+      if (key === 'f') {
+        event.preventDefault();
+        postToHost({ type: 'shortcut', action: 'globalSearch' });
+        return;
+      }
+      if (key === 'e') {
+        event.preventDefault();
+        postToHost({ type: 'shortcut', action: 'exportPdf' });
+        return;
+      }
+      if (key === 'd') {
+        event.preventDefault();
+        postToHost({ type: 'shortcut', action: 'cycleTheme' });
+        return;
+      }
+      // 未対応の Ctrl+Shift+* はブラウザ標準に委ねる。
+      return;
+    }
+
+    // --- Ctrl+* （Shift なし）系 ---
+
+    // Ctrl+B: 目次サイドバーの表示切替（実際の切替はホストが担当）。
+    if (key === 'b') {
+      event.preventDefault();
+      postToHost({ type: 'shortcut', action: 'toggleSidebar' });
+      return;
+    }
+
     if (!event.shiftKey && key === 'w') {
       event.preventDefault();
       postToHost({ type: 'shortcut', action: 'closeTab' });
@@ -610,13 +866,14 @@
 
   function init() {
     // 1. コードブロック中の mermaid 指定を div に変換する（構造変更）。
-    var mermaidNodes = [];
+    //    変換結果はモジュール側 mermaidNodes に記録される（テーマ切替で再利用）。
     safeRun(function () {
-      mermaidNodes = convertMermaidBlocks();
+      convertMermaidBlocks();
     });
 
-    // 2. 目次生成・シンタックスハイライトは mermaid 変換後に実施する。
+    // 2. シンタックスハイライトと数式は mermaid 変換後・目次生成前に実施する。
     safeRun(applyHighlighting);
+    safeRun(renderMath);
     safeRun(buildToc);
     safeRun(setupTocInteractions);
 
@@ -625,9 +882,10 @@
       renderMermaidNodes(mermaidNodes);
     });
 
-    // 4. 検索UIとショートカット転送。
+    // 4. 検索UI・ショートカット転送・スクロール通知。
     safeRun(setupSearchInteractions);
     safeRun(setupShortcuts);
+    safeRun(setupScrollReporting);
 
     // 注意: ここでスクロール位置を変更しない。
     // URL にハッシュが付いている場合はブラウザ標準の挙動に任せる。

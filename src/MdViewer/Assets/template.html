@@ -1,14 +1,32 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="ja" data-theme="{{THEME}}">
 <head>
 <meta charset="utf-8">
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="color-scheme" content="light dark">
 <base href="{{BASE}}">
 <title>{{TITLE}}</title>
 <link rel="stylesheet" href="https://assets.mdviewer/style.css">
-<link rel="stylesheet" href="https://assets.mdviewer/vendor/highlight-github.min.css">
+<link rel="stylesheet" href="https://assets.mdviewer/vendor/highlight-github.min.css" id="hljs-light">
+<link rel="stylesheet" href="https://assets.mdviewer/vendor/highlight-github-dark.min.css" id="hljs-dark" disabled>
+<link rel="stylesheet" href="https://assets.mdviewer/vendor/katex.min.css">
+<script>
+/* highlight.js のテーマ CSS を初期テーマに合わせて即時切替し、
+   ダーク時のトークン色フラッシュを防ぐ（後続の切替は viewer.js が担当）。 */
+(function () {
+  try {
+    var dark = document.documentElement.getAttribute('data-theme') === 'dark';
+    var light = document.getElementById('hljs-light');
+    var darkCss = document.getElementById('hljs-dark');
+    if (light) light.disabled = dark;
+    if (darkCss) darkCss.disabled = !dark;
+  } catch (err) { /* 失敗しても致命的ではない */ }
+})();
+</script>
 <script src="https://assets.mdviewer/vendor/highlight.min.js"></script>
 <script src="https://assets.mdviewer/vendor/mermaid.min.js"></script>
+<script src="https://assets.mdviewer/vendor/katex.min.js"></script>
+<script src="https://assets.mdviewer/vendor/contrib/auto-render.min.js"></script>
 </head>
 <body>
 
@@ -31,9 +49,12 @@
 
 <main id="main-content" class="main-content">
   <article class="markdown-body">
+{{FRONTMATTER}}
 {{BODY}}
   </article>
 </main>
+
+{{META}}
 
 <script src="https://assets.mdviewer/viewer.js" defer></script>
 </body>

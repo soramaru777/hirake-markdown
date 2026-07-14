@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Text.Json;
@@ -16,6 +17,12 @@ public interface IDocumentTabHost
     void ShortcutNextTab();
     void ShortcutPrevTab();
     void ShortcutOpenFile();
+    void ShortcutQuickPaste();
+    void ShortcutGlobalSearch();
+    void ShortcutToggleSidebar();
+    void ShortcutExportPdf();
+    void ShortcutCycleTheme();
+    void OnTabZoomChanged(DocumentTab source, double zoomFactor);
 }
 
 /// <summary>
@@ -25,8 +32,15 @@ public interface IDocumentTabHost
 public sealed class DocumentTab : IDisposable
 {
     private const string AssetsHost = "assets.mdviewer";
-    private const string DocHost = "doc.mdviewer";
     private const string TempHost = "temp.mdviewer";
+
+    // doc 仮想ホストの命名規則（"doc.mdviewer" / "&lt;letter&gt;.doc.mdviewer"）は
+    // MarkdownRenderer を唯一の真実源とし、そこから参照する（重複実装を避ける）。
+
+    // マップ対象ドライブのルートパス列挙はプロセス内で1回だけ行う（タブごとの再列挙を避ける）。
+    // IsReady な全種別ドライブを対象にし、ネットワーク/USB への絶対パスリンクも解決可能にする。
+    private static readonly Lazy<IReadOnlyList<string>> ReadyDriveRoots =
+        new(ComputeReadyDriveRoots);
 
     // NavigateToString の約 2MB 制限を避けるための閾値。
     private const int NavigateToStringByteLimit = 1_500_000;
@@ -41,7 +55,11 @@ public sealed class DocumentTab : IDisposable
 
     private string? _restoreScrollRaw;
     private string? _lastTempFile;
+    private string _effectiveTheme = "light";
     private bool _initialized;
+    private bool _initialScrollRestored;
+    private bool _zoomHandlerAttached;
+    private bool _suppressZoomNotify;
     private bool _disposed;
 
     public WebView2 WebView { get; }
@@ -57,7 +75,12 @@ public sealed class DocumentTab : IDisposable
         _tempDirectory = tempDirectory;
         _driveRoot = Path.GetPathRoot(FilePath) ?? string.Empty;
 
+        _effectiveTheme = SettingsStore.GetEffectiveTheme(SettingsStore.Instance.Theme);
+
         WebView = new WebView2();
+
+        // ダーク時の白フラッシュ防止のため、初期化前に既定背景色を設定する。
+        SetDefaultBackground(_effectiveTheme);
     }
 
     public async Task InitializeAsync()
@@ -81,11 +104,10 @@ public sealed class DocumentTab : IDisposable
             AssetsHost, _assetsDirectory, CoreWebView2HostResourceAccessKind.Allow);
         core.SetVirtualHostNameToFolderMapping(
             TempHost, _tempDirectory, CoreWebView2HostResourceAccessKind.Allow);
-        if (!string.IsNullOrEmpty(_driveRoot))
-        {
-            core.SetVirtualHostNameToFolderMapping(
-                DocHost, _driveRoot, CoreWebView2HostResourceAccessKind.Allow);
-        }
+
+        // ドキュメント用: 各固定ドライブを "<ドライブ文字小文字>.doc.mdviewer" にマップし、
+        // 別ドライブへの絶対パスリンクも解決できるようにする。
+        MapDocumentDrives(core);
 
         core.Settings.AreDefaultContextMenusEnabled = true;
         core.Settings.IsStatusBarEnabled = false;
@@ -95,8 +117,103 @@ public sealed class DocumentTab : IDisposable
         core.NewWindowRequested += OnNewWindowRequested;
         core.WebMessageReceived += OnWebMessageReceived;
 
+        // ズーム倍率の復元と変更監視（初期設定後に購読して初回通知を避ける）。
+        try
+        {
+            WebView.ZoomFactor = SettingsStore.Instance.ZoomFactor;
+        }
+        catch
+        {
+            // ズーム適用失敗は無視する。
+        }
+        WebView.ZoomFactorChanged += OnZoomFactorChanged;
+        _zoomHandlerAttached = true;
+
+        // 初期化時点の実効テーマで背景色を確定する。
+        SetDefaultBackground(_effectiveTheme);
+
         StartWatcher();
         await LoadContentAsync().ConfigureAwait(true);
+    }
+
+    /// <summary>IsReady な全ドライブのルートパスを列挙する（プロセス内で1回のみ実行）。</summary>
+    private static IReadOnlyList<string> ComputeReadyDriveRoots()
+    {
+        var roots = new List<string>();
+        try
+        {
+            foreach (var drive in DriveInfo.GetDrives())
+            {
+                try
+                {
+                    // 固定に限らず、ネットワーク/USB 等も含めて Ready なものは対象にする。
+                    if (drive.IsReady)
+                    {
+                        roots.Add(drive.RootDirectory.FullName);
+                    }
+                }
+                catch
+                {
+                    // 個別ドライブの参照失敗（IsReady の例外含む）は無視して続行する。
+                }
+            }
+        }
+        catch
+        {
+            // ドライブ列挙自体の失敗は無視する。
+        }
+        return roots;
+    }
+
+    /// <summary>Ready な各ドライブを "&lt;letter&gt;.doc.mdviewer" にマップする。</summary>
+    private void MapDocumentDrives(CoreWebView2 core)
+    {
+        var mapped = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void MapDrive(string? root)
+        {
+            if (string.IsNullOrEmpty(root) || !char.IsLetter(root[0]))
+            {
+                return;
+            }
+            string host = MarkdownRenderer.BuildDocHost(root[0]);
+            if (!mapped.Add(host))
+            {
+                return;
+            }
+            try
+            {
+                core.SetVirtualHostNameToFolderMapping(
+                    host, root, CoreWebView2HostResourceAccessKind.Allow);
+            }
+            catch
+            {
+                // 未準備ドライブ等のマップ失敗は無視する。
+            }
+        }
+
+        // プロセス内キャッシュ済みの Ready ドライブ群をマップする（列挙は1回のみ）。
+        foreach (var root in ReadyDriveRoots.Value)
+        {
+            MapDrive(root);
+        }
+
+        // 自ファイルのドライブは必ずマップする（列挙後にドライブが増えた場合の保険）。
+        MapDrive(_driveRoot);
+
+        // 旧 doc.mdviewer（サブドメイン無し）の後方互換マッピング。
+        if (!string.IsNullOrEmpty(_driveRoot))
+        {
+            try
+            {
+                core.SetVirtualHostNameToFolderMapping(
+                    MarkdownRenderer.DocHost, _driveRoot, CoreWebView2HostResourceAccessKind.Allow);
+            }
+            catch
+            {
+                // 無視する。
+            }
+        }
     }
 
     private Task EnsureLoadedAsync()
@@ -133,7 +250,9 @@ public sealed class DocumentTab : IDisposable
         string html;
         try
         {
-            html = MarkdownRenderer.Render(FilePath, _assetsDirectory);
+            _effectiveTheme = SettingsStore.GetEffectiveTheme(SettingsStore.Instance.Theme);
+            SetDefaultBackground(_effectiveTheme);
+            html = MarkdownRenderer.Render(FilePath, _assetsDirectory, _effectiveTheme);
         }
         catch (Exception ex)
         {
@@ -228,6 +347,91 @@ public sealed class DocumentTab : IDisposable
         core.ShowPrintUI(CoreWebView2PrintDialogKind.Browser);
     }
 
+    /// <summary>現在のページを PDF ファイルへ書き出す。成功で true。</summary>
+    public async Task<bool> ExportPdfAsync(string path)
+    {
+        var core = WebView.CoreWebView2;
+        if (core == null)
+        {
+            return false;
+        }
+
+        try
+        {
+            return await core.PrintToPdfAsync(path, null).ConfigureAwait(true);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    // ---- テーマ -------------------------------------------------------
+
+    /// <summary>実効テーマ（"light"/"dark"）をページと既定背景色へ反映する。</summary>
+    public void ApplyTheme(string effectiveTheme)
+    {
+        _effectiveTheme = effectiveTheme == "dark" ? "dark" : "light";
+        SetDefaultBackground(_effectiveTheme);
+
+        var core = WebView.CoreWebView2;
+        if (core == null)
+        {
+            return;
+        }
+
+        string theme = _effectiveTheme;
+        _ = core.ExecuteScriptAsync(
+            "(function(){try{if(typeof window.__mdvSetTheme==='function'){window.__mdvSetTheme('"
+            + theme + "');}}catch(e){}})();");
+    }
+
+    private void SetDefaultBackground(string effectiveTheme)
+    {
+        try
+        {
+            WebView.DefaultBackgroundColor = effectiveTheme == "dark"
+                ? System.Drawing.Color.FromArgb(0x1E, 0x1E, 0x1E)
+                : System.Drawing.Color.White;
+        }
+        catch
+        {
+            // 背景色設定失敗は無視する。
+        }
+    }
+
+    // ---- ズーム -------------------------------------------------------
+
+    /// <summary>他タブからの通知でズーム倍率を反映する（ホストへ再通知しない）。</summary>
+    public void ApplyZoom(double zoomFactor)
+    {
+        _suppressZoomNotify = true;
+        try
+        {
+            WebView.ZoomFactor = zoomFactor;
+        }
+        catch
+        {
+            // ズーム適用失敗は無視する。
+        }
+        finally
+        {
+            _suppressZoomNotify = false;
+        }
+    }
+
+    private void OnZoomFactorChanged(object? sender, EventArgs e)
+    {
+        double zoom = WebView.ZoomFactor;
+        SettingsStore.Instance.ZoomFactor = zoom;
+
+        if (_suppressZoomNotify)
+        {
+            return;
+        }
+        _host.OnTabZoomChanged(this, zoom);
+    }
+
     // ---- 自動リロード -------------------------------------------------
 
     private void StartWatcher()
@@ -307,7 +511,7 @@ public sealed class DocumentTab : IDisposable
         {
             string host = uri.Host;
 
-            if (host.Equals(DocHost, StringComparison.OrdinalIgnoreCase))
+            if (IsDocHost(host))
             {
                 if (IsMarkdownPath(uri.AbsolutePath))
                 {
@@ -331,16 +535,48 @@ public sealed class DocumentTab : IDisposable
 
     private void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
     {
-        if (_restoreScrollRaw != null && WebView.CoreWebView2 != null)
+        var core = WebView.CoreWebView2;
+        if (core == null)
+        {
+            return;
+        }
+
+        // 自動リロード時の位置復元が最優先（既存挙動を維持する）。
+        if (_restoreScrollRaw != null)
         {
             string raw = _restoreScrollRaw;
             _restoreScrollRaw = null;
-            if (string.IsNullOrEmpty(raw) || raw == "null")
+            _initialScrollRestored = true;
+            if (!string.IsNullOrEmpty(raw) && raw != "null"
+                && double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out double y))
             {
-                return;
+                // 初回ロードと同じ復元経路を使い、mermaid 再描画後のレイアウト変動にも追従させる。
+                RestoreSavedScroll(core, y);
             }
-            _ = WebView.CoreWebView2.ExecuteScriptAsync($"window.scrollTo(0, {raw});");
+            return;
         }
+
+        // 初回ロード時のみ、保存済みスクロール位置があれば復元する。
+        if (!_initialScrollRestored)
+        {
+            _initialScrollRestored = true;
+            double? saved = SettingsStore.Instance.GetScrollPosition(FilePath);
+            if (saved.HasValue && saved.Value > 0)
+            {
+                RestoreSavedScroll(core, saved.Value);
+            }
+        }
+    }
+
+    private static void RestoreSavedScroll(CoreWebView2 core, double y)
+    {
+        string value = y.ToString(CultureInfo.InvariantCulture);
+        // __mdvRestoreScroll が未定義でも window.scrollTo にフォールバックする。
+        string script =
+            "(function(){try{if(typeof window.__mdvRestoreScroll==='function'){"
+            + "window.__mdvRestoreScroll(" + value + ");}else{window.scrollTo(0," + value + ");}}"
+            + "catch(e){try{window.scrollTo(0," + value + ");}catch(e2){}}})();";
+        _ = core.ExecuteScriptAsync(script);
     }
 
     private void OnNewWindowRequested(object? sender, CoreWebView2NewWindowRequestedEventArgs e)
@@ -354,7 +590,7 @@ public sealed class DocumentTab : IDisposable
 
         if (uri.Scheme is "http" or "https")
         {
-            if (uri.Host.Equals(DocHost, StringComparison.OrdinalIgnoreCase)
+            if (IsDocHost(uri.Host)
                 && IsMarkdownPath(uri.AbsolutePath))
             {
                 OpenInNewTab(ConvertDocUriToPath(uri));
@@ -376,8 +612,26 @@ public sealed class DocumentTab : IDisposable
         {
             using var doc = JsonDocument.Parse(e.WebMessageAsJson);
             var root = doc.RootElement;
-            if (!root.TryGetProperty("type", out var typeEl)
-                || typeEl.GetString() != "shortcut")
+            if (!root.TryGetProperty("type", out var typeEl))
+            {
+                return;
+            }
+
+            string? type = typeEl.GetString();
+
+            // スクロール位置の保存（viewer.js 側で 300ms デバウンス済み）。
+            if (type == "scroll")
+            {
+                if (root.TryGetProperty("y", out var yEl)
+                    && yEl.ValueKind == JsonValueKind.Number
+                    && yEl.TryGetDouble(out double y))
+                {
+                    SettingsStore.Instance.UpdateScrollPosition(FilePath, y);
+                }
+                return;
+            }
+
+            if (type != "shortcut")
             {
                 return;
             }
@@ -401,6 +655,21 @@ public sealed class DocumentTab : IDisposable
                 case "openFile":
                     _host.ShortcutOpenFile();
                     break;
+                case "quickPaste":
+                    _host.ShortcutQuickPaste();
+                    break;
+                case "globalSearch":
+                    _host.ShortcutGlobalSearch();
+                    break;
+                case "toggleSidebar":
+                    _host.ShortcutToggleSidebar();
+                    break;
+                case "exportPdf":
+                    _host.ShortcutExportPdf();
+                    break;
+                case "cycleTheme":
+                    _host.ShortcutCycleTheme();
+                    break;
             }
         }
         catch (JsonException)
@@ -413,8 +682,13 @@ public sealed class DocumentTab : IDisposable
 
     private static bool IsInternalHost(string host) =>
         host.Equals(AssetsHost, StringComparison.OrdinalIgnoreCase)
-        || host.Equals(DocHost, StringComparison.OrdinalIgnoreCase)
-        || host.Equals(TempHost, StringComparison.OrdinalIgnoreCase);
+        || host.Equals(TempHost, StringComparison.OrdinalIgnoreCase)
+        || IsDocHost(host);
+
+    /// <summary>doc.mdviewer 本体、または "&lt;letter&gt;.doc.mdviewer" を内部ホストとみなす。</summary>
+    private static bool IsDocHost(string host) =>
+        host.Equals(MarkdownRenderer.DocHost, StringComparison.OrdinalIgnoreCase)
+        || host.EndsWith("." + MarkdownRenderer.DocHost, StringComparison.OrdinalIgnoreCase);
 
     private static bool IsMarkdownPath(string absolutePath)
     {
@@ -426,11 +700,26 @@ public sealed class DocumentTab : IDisposable
     /// <summary>doc 仮想ホスト URL を実ファイルパスへ逆変換する。</summary>
     private string ConvertDocUriToPath(Uri uri)
     {
+        string root = GetDriveRootFromHost(uri.Host);
         var segments = uri.AbsolutePath
             .Split('/', StringSplitOptions.RemoveEmptyEntries)
             .Select(Uri.UnescapeDataString);
         string relative = string.Join(Path.DirectorySeparatorChar, segments);
-        return Path.Combine(_driveRoot, relative);
+        return Path.Combine(root, relative);
+    }
+
+    /// <summary>
+    /// ホスト名からドライブルートを求める。
+    /// "&lt;letter&gt;.doc.mdviewer" → "&lt;LETTER&gt;:\"、
+    /// 旧 "doc.mdviewer" は表示ファイルのドライブルート（後方互換）。
+    /// </summary>
+    private string GetDriveRootFromHost(string host)
+    {
+        if (MarkdownRenderer.TryGetDriveFromDocHost(host, out char drive))
+        {
+            return drive + ":\\";
+        }
+        return _driveRoot;
     }
 
     private void OpenInNewTab(string path)
@@ -488,6 +777,12 @@ public sealed class DocumentTab : IDisposable
 
         try
         {
+            if (_zoomHandlerAttached)
+            {
+                WebView.ZoomFactorChanged -= OnZoomFactorChanged;
+                _zoomHandlerAttached = false;
+            }
+
             if (WebView.CoreWebView2 != null)
             {
                 WebView.CoreWebView2.NavigationStarting -= OnNavigationStarting;

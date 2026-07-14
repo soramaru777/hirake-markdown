@@ -1,9 +1,11 @@
 /* MdViewer - style.css
    GitHub 風 Markdown 表示 + サイドバー目次 + ページ内検索バーのスタイル。
-   ライトテーマ固定。
+   ライト／ダーク両テーマ対応（配色は CSS 変数で切り替える）。
+   テーマは html[data-theme="light"|"dark"] で選択し、既定はライト。
 */
 
 :root {
+  /* ---- ライトテーマ（既定） ---- */
   --mdv-text: #1f2328;
   --mdv-text-muted: #59636e;
   --mdv-border: #d1d9e0;
@@ -13,11 +15,39 @@
   --mdv-bg-sidebar: #f6f8fa;
   --mdv-link: #0969da;
   --mdv-accent: #0969da;
+  --mdv-accent-soft-bg: rgba(9, 105, 218, 0.1);
   --mdv-code-bg: rgba(175, 184, 193, 0.2);
   --mdv-mark-bg: #fff2ac;
   --mdv-mark-current-bg: #ffb300;
+  --mdv-error-text: #cf222e;
+  --mdv-error-bg: #fff0ee;
+  --mdv-error-border: #ffc1bc;
+  --mdv-shadow: rgba(31, 35, 40, 0.15);
+  --mdv-chip-bg: rgba(246, 248, 250, 0.85);
   --mdv-sidebar-width: 260px;
   --mdv-sidebar-toggle-size: 34px;
+}
+
+/* ---- ダークテーマ（GitHub Dark 風） ---- */
+html[data-theme="dark"] {
+  --mdv-text: #e6edf3;
+  --mdv-text-muted: #8b949e;
+  --mdv-border: #30363d;
+  --mdv-border-muted: #21262d;
+  --mdv-bg: #0d1117;
+  --mdv-bg-inset: #161b22;
+  --mdv-bg-sidebar: #161b22;
+  --mdv-link: #4493f8;
+  --mdv-accent: #4493f8;
+  --mdv-accent-soft-bg: rgba(56, 139, 253, 0.15);
+  --mdv-code-bg: rgba(110, 118, 129, 0.4);
+  --mdv-mark-bg: rgba(187, 128, 9, 0.45);
+  --mdv-mark-current-bg: rgba(187, 128, 9, 0.85);
+  --mdv-error-text: #ff7b72;
+  --mdv-error-bg: #2a1615;
+  --mdv-error-border: #6e2b28;
+  --mdv-shadow: rgba(1, 4, 9, 0.5);
+  --mdv-chip-bg: rgba(22, 27, 34, 0.85);
 }
 
 * {
@@ -28,6 +58,8 @@ html, body {
   margin: 0;
   padding: 0;
   height: 100%;
+  /* ダーク時の白フラッシュ防止のため html にも背景を持たせる。 */
+  background-color: var(--mdv-bg);
 }
 
 body {
@@ -154,7 +186,7 @@ body.toc-open .toc-sidebar {
 }
 
 .toc-content a.active {
-  background: rgba(9, 105, 218, 0.1);
+  background: var(--mdv-accent-soft-bg);
   color: var(--mdv-accent);
   font-weight: 600;
 }
@@ -179,7 +211,7 @@ body.toc-open .toc-sidebar {
   border: 1px solid var(--mdv-border);
   border-radius: 8px;
   padding: 6px 8px;
-  box-shadow: 0 4px 16px rgba(31, 35, 40, 0.15);
+  box-shadow: 0 4px 16px var(--mdv-shadow);
 }
 
 .search-bar.open {
@@ -427,9 +459,9 @@ mark.mdv-search-hit.current {
 }
 
 .markdown-body .mermaid-error {
-  color: #cf222e;
-  background-color: #fff0ee;
-  border: 1px solid #ffc1bc;
+  color: var(--mdv-error-text);
+  background-color: var(--mdv-error-bg);
+  border: 1px solid var(--mdv-error-border);
   border-radius: 6px;
   padding: 12px;
   font-family: Consolas, "Cascadia Mono", monospace;
@@ -449,6 +481,127 @@ mark.mdv-search-hit.current {
   border-bottom-color: var(--mdv-border);
   border-radius: 6px;
   box-shadow: inset 0 -1px 0 var(--mdv-border);
+}
+
+/* ---------- フロントマターカード ---------- */
+
+.mdv-frontmatter {
+  margin: 0 0 24px;
+  border: 1px solid var(--mdv-border);
+  border-radius: 6px;
+  background-color: var(--mdv-bg-inset);
+  font-size: 0.9em;
+}
+
+.mdv-frontmatter > summary {
+  cursor: pointer;
+  padding: 8px 14px;
+  font-weight: 600;
+  color: var(--mdv-text-muted);
+  list-style: none;
+  user-select: none;
+}
+
+.mdv-frontmatter > summary::-webkit-details-marker {
+  display: none;
+}
+
+.mdv-frontmatter > summary::before {
+  content: "\25B8"; /* ▸ */
+  display: inline-block;
+  margin-right: 8px;
+  transition: transform 0.1s ease;
+}
+
+.mdv-frontmatter[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.mdv-frontmatter-body {
+  padding: 0 14px 12px;
+}
+
+.mdv-frontmatter table {
+  display: table;
+  width: 100%;
+  border-collapse: collapse;
+  margin: 4px 0 0;
+}
+
+.mdv-frontmatter th,
+.mdv-frontmatter td {
+  padding: 4px 10px;
+  border: 1px solid var(--mdv-border-muted);
+  text-align: left;
+  vertical-align: top;
+}
+
+.mdv-frontmatter th {
+  width: 1%;
+  white-space: nowrap;
+  font-weight: 600;
+  color: var(--mdv-text-muted);
+  background-color: var(--mdv-bg);
+}
+
+.mdv-frontmatter pre {
+  margin: 4px 0 0;
+  padding: 10px 12px;
+  overflow: auto;
+  background-color: var(--mdv-bg);
+  border-radius: 6px;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 0.9em;
+  white-space: pre;
+}
+
+/* ---------- 文書メタ情報バー（右下チップ） ---------- */
+
+.mdv-meta {
+  position: fixed;
+  right: 14px;
+  bottom: 12px;
+  z-index: 15;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  max-width: calc(100vw - 28px);
+  padding: 5px 12px;
+  border: 1px solid var(--mdv-border);
+  border-radius: 999px;
+  background-color: var(--mdv-chip-bg);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: 0 2px 8px var(--mdv-shadow);
+  color: var(--mdv-text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.mdv-meta-item {
+  display: inline-flex;
+  align-items: center;
+}
+
+.mdv-meta-sep {
+  opacity: 0.4;
+}
+
+/* ---------- KaTeX 数式 ---------- */
+
+/* KaTeX は currentColor 基準で描画されるため、本文色をそのまま継承させる。 */
+.markdown-body .katex {
+  color: inherit;
+}
+
+/* ブロック数式は横スクロールでオーバーフローを許容する。 */
+.markdown-body .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 0;
 }
 
 /* ---------- 印刷プレビュー表示中（画面側の退避） ----------
@@ -475,6 +628,31 @@ html.mdv-printing .main-content {
 /* ---------- 印刷時 ---------- */
 
 @media print {
+  /* 印刷は常にライトテーマで出力する。
+     ダーク変数（html[data-theme="dark"] 詳細度 0,1,1）を、同一詳細度かつ
+     ソース順で後方のこのルールで打ち消す（!important は使わずとも順序で勝つ）。
+     ライトテーマは :root の既定値がそのまま使われる。 */
+  html[data-theme="dark"] {
+    --mdv-text: #1f2328;
+    --mdv-text-muted: #59636e;
+    --mdv-border: #d1d9e0;
+    --mdv-border-muted: #e7ebef;
+    --mdv-bg: #ffffff;
+    --mdv-bg-inset: #f6f8fa;
+    --mdv-bg-sidebar: #f6f8fa;
+    --mdv-link: #0969da;
+    --mdv-accent: #0969da;
+    --mdv-accent-soft-bg: rgba(9, 105, 218, 0.1);
+    --mdv-code-bg: rgba(175, 184, 193, 0.2);
+    --mdv-mark-bg: #fff2ac;
+    --mdv-mark-current-bg: #ffb300;
+    --mdv-error-text: #cf222e;
+    --mdv-error-bg: #fff0ee;
+    --mdv-error-border: #ffc1bc;
+    --mdv-shadow: rgba(31, 35, 40, 0.15);
+    --mdv-chip-bg: rgba(246, 248, 250, 0.85);
+  }
+
   /* 画面側退避（mdv-printing）の overflow: hidden / visibility: hidden が
      印刷内容に影響しないよう、印刷レイアウトでは必ず解除する
      （画面側ルールより高い詳細度のセレクタで上書きする）。 */
@@ -489,7 +667,8 @@ html.mdv-printing .main-content {
 
   .toc-toggle,
   .toc-sidebar,
-  .search-bar {
+  .search-bar,
+  .mdv-meta {
     display: none !important;
   }
 

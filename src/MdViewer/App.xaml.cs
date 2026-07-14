@@ -61,9 +61,18 @@ public partial class App : Application
 
         _mainWindow.Show();
 
-        foreach (var path in paths)
+        if (paths.Count > 0)
         {
-            _mainWindow.OpenFile(path);
+            // 引数がある場合は前回セッションを復元せず、指定ファイルのみ開く（既存動作）。
+            foreach (var path in paths)
+            {
+                _mainWindow.OpenFile(path);
+            }
+        }
+        else
+        {
+            // 引数なし起動時のみ前回セッションを復元する。
+            _mainWindow.RestoreSession();
         }
     }
 
@@ -109,6 +118,9 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        // 未保存の設定変更（デバウンス待ち）を確実に書き出す。
+        SettingsStore.Instance.SaveNow();
+
         _instanceManager?.Dispose();
         base.OnExit(e);
     }

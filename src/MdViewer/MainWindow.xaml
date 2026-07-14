@@ -1,12 +1,29 @@
 <Window x:Class="MdViewer.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:MdViewer"
         Title="MdViewer"
         Height="800" Width="1100"
         AllowDrop="True"
+        Background="{DynamicResource ChromeWindowBackground}"
         Drop="Window_Drop"
         DragOver="Window_DragOver"
         PreviewKeyDown="Window_PreviewKeyDown">
+
+    <!-- WPF クロームのテーマ配色。既定はライト。コードから this.Resources[key] を差し替えてダークへ切替える。 -->
+    <Window.Resources>
+        <SolidColorBrush x:Key="ChromeWindowBackground" Color="#FFFFFFFF" />
+        <SolidColorBrush x:Key="ChromeBarBackground" Color="#FFF3F3F3" />
+        <SolidColorBrush x:Key="ChromeBorder" Color="#FFDDDDDD" />
+        <SolidColorBrush x:Key="ChromeText" Color="#FF1F1F1F" />
+        <SolidColorBrush x:Key="ChromeTitleText" Color="#FF888888" />
+        <SolidColorBrush x:Key="ChromeSubText" Color="#FFAAAAAA" />
+        <!-- サイドバー用の追加配色（ApplyChromeTheme でライト/ダーク両方を差し替える）。 -->
+        <SolidColorBrush x:Key="ChromeAccent" Color="#FF0969DA" />
+        <SolidColorBrush x:Key="ChromeHover" Color="#FFE8E8E8" />
+        <SolidColorBrush x:Key="ChromeInputBackground" Color="#FFFFFFFF" />
+        <SolidColorBrush x:Key="ChromeActiveBackground" Color="#FFDDEBFF" />
+    </Window.Resources>
 
     <Grid>
         <Grid.RowDefinitions>
@@ -14,19 +31,36 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- タブヘッダー（横スクロール可・単一行）＋右端の印刷ボタン -->
+        <!-- タブヘッダー（横スクロール可・単一行）＋左端トグル＋右端のツールボタン群 -->
         <Border Grid.Row="0"
                 BorderThickness="0,0,0,1"
-                BorderBrush="#DDDDDD"
-                Background="#F3F3F3">
+                BorderBrush="{DynamicResource ChromeBorder}"
+                Background="{DynamicResource ChromeBarBackground}">
             <Grid>
                 <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
+                <!-- ファイルツリー サイドバーのトグル -->
+                <Button x:Name="SidebarToggleButton"
+                        Grid.Column="0"
+                        Click="SidebarToggleButton_Click"
+                        Content="&#xE700;"
+                        FontFamily="Segoe MDL2 Assets"
+                        FontSize="14"
+                        Padding="8,4"
+                        Margin="6,2,2,2"
+                        VerticalAlignment="Center"
+                        BorderThickness="0"
+                        Background="Transparent"
+                        Foreground="{DynamicResource ChromeText}"
+                        Cursor="Hand"
+                        ToolTip="ファイルツリー (Ctrl+B)" />
+
                 <ListBox x:Name="TabList"
-                 Grid.Column="0"
+                 Grid.Column="1"
                  ItemsSource="{Binding Tabs}"
                  SelectionChanged="TabList_SelectionChanged"
                  BorderThickness="0"
@@ -54,6 +88,7 @@
                         <TextBlock Text="{Binding FileName}"
                                    VerticalAlignment="Center"
                                    MaxWidth="240"
+                                   Foreground="{DynamicResource ChromeText}"
                                    TextTrimming="CharacterEllipsis" />
                         <Button Content="&#x2715;"
                                 Click="CloseTab_Click"
@@ -63,6 +98,7 @@
                                 FontSize="10"
                                 BorderThickness="0"
                                 Background="Transparent"
+                                Foreground="{DynamicResource ChromeText}"
                                 Cursor="Hand"
                                 ToolTip="タブを閉じる" />
                     </StackPanel>
@@ -70,40 +106,277 @@
             </ListBox.ItemTemplate>
                 </ListBox>
 
-                <Button x:Name="PrintButton"
-                        Grid.Column="1"
-                        Click="PrintButton_Click"
-                        Content="&#xE749;"
-                        FontFamily="Segoe MDL2 Assets"
-                        FontSize="14"
-                        Padding="8,4"
-                        Margin="4,2,6,2"
-                        VerticalAlignment="Center"
-                        BorderThickness="0"
-                        Background="Transparent"
-                        Cursor="Hand"
-                        IsEnabled="False"
-                        ToolTip="印刷 (Ctrl+P)" />
+                <StackPanel Grid.Column="2"
+                            Orientation="Horizontal"
+                            VerticalAlignment="Center">
+
+                    <Button x:Name="ExportPdfButton"
+                            Click="ExportPdfButton_Click"
+                            Content="&#xE8A5;"
+                            FontFamily="Segoe MDL2 Assets"
+                            FontSize="14"
+                            Padding="8,4"
+                            Margin="4,2,0,2"
+                            VerticalAlignment="Center"
+                            BorderThickness="0"
+                            Background="Transparent"
+                            Foreground="{DynamicResource ChromeText}"
+                            Cursor="Hand"
+                            IsEnabled="False"
+                            ToolTip="PDF にエクスポート (Ctrl+Shift+E)" />
+
+                    <Button x:Name="PrintButton"
+                            Click="PrintButton_Click"
+                            Content="&#xE749;"
+                            FontFamily="Segoe MDL2 Assets"
+                            FontSize="14"
+                            Padding="8,4"
+                            Margin="4,2,0,2"
+                            VerticalAlignment="Center"
+                            BorderThickness="0"
+                            Background="Transparent"
+                            Foreground="{DynamicResource ChromeText}"
+                            Cursor="Hand"
+                            IsEnabled="False"
+                            ToolTip="印刷 (Ctrl+P)" />
+
+                    <Button x:Name="ThemeButton"
+                            Click="ThemeButton_Click"
+                            Content="&#xE793;"
+                            FontFamily="Segoe MDL2 Assets"
+                            FontSize="14"
+                            Padding="8,4"
+                            Margin="4,2,6,2"
+                            VerticalAlignment="Center"
+                            BorderThickness="0"
+                            Background="Transparent"
+                            Foreground="{DynamicResource ChromeText}"
+                            Cursor="Hand"
+                            ToolTip="テーマ: 自動 (Ctrl+Shift+D)" />
+                </StackPanel>
             </Grid>
         </Border>
 
-        <!-- WebView2 を常設ホストする領域（再親子化を避けるため） -->
-        <Grid x:Name="WebViewHost" Grid.Row="1" />
+        <!-- 本体: [サイドバー][スプリッタ][コンテンツ] -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition x:Name="SidebarColumn" Width="0" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
 
-        <!-- タブが無いときの案内 -->
-        <StackPanel x:Name="EmptyState"
-                    Grid.Row="1"
-                    HorizontalAlignment="Center"
-                    VerticalAlignment="Center">
-            <TextBlock Text="Markdown ファイルを開いてください"
-                       FontSize="18"
-                       Foreground="#888888"
-                       HorizontalAlignment="Center" />
-            <TextBlock Text="Ctrl+O で開く / ここにファイルをドラッグ＆ドロップ"
-                       FontSize="13"
-                       Foreground="#AAAAAA"
-                       Margin="0,10,0,0"
-                       HorizontalAlignment="Center" />
-        </StackPanel>
+            <!-- ファイルツリー / フォルダ内横断検索 サイドバー -->
+            <Border x:Name="Sidebar"
+                    Grid.Column="0"
+                    Visibility="Collapsed"
+                    BorderThickness="0,0,1,0"
+                    BorderBrush="{DynamicResource ChromeBorder}"
+                    Background="{DynamicResource ChromeBarBackground}">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <!-- 検索ボックス（プレースホルダをオーバーレイ表示） -->
+                    <Border Grid.Row="0"
+                            Margin="8,8,8,4"
+                            BorderThickness="1"
+                            BorderBrush="{DynamicResource ChromeBorder}"
+                            Background="{DynamicResource ChromeInputBackground}"
+                            CornerRadius="4">
+                        <Grid>
+                            <TextBox x:Name="SearchBox"
+                                     BorderThickness="0"
+                                     Background="Transparent"
+                                     Foreground="{DynamicResource ChromeText}"
+                                     CaretBrush="{DynamicResource ChromeText}"
+                                     Padding="6,5"
+                                     VerticalContentAlignment="Center"
+                                     TextChanged="SearchBox_TextChanged"
+                                     PreviewKeyDown="SearchBox_PreviewKeyDown" />
+                            <TextBlock x:Name="SearchPlaceholder"
+                                       Text="フォルダ内を検索"
+                                       IsHitTestVisible="False"
+                                       Foreground="{DynamicResource ChromeSubText}"
+                                       Padding="8,5"
+                                       VerticalAlignment="Center" />
+                        </Grid>
+                    </Border>
+
+                    <!-- ツリー表示（検索が空のとき） -->
+                    <Grid x:Name="TreePane" Grid.Row="1">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock x:Name="TreeRootLabel"
+                                   Grid.Row="0"
+                                   Margin="10,2,10,4"
+                                   FontSize="11"
+                                   TextTrimming="CharacterEllipsis"
+                                   Foreground="{DynamicResource ChromeSubText}" />
+
+                        <TreeView x:Name="FileTree"
+                                  Grid.Row="1"
+                                  BorderThickness="0"
+                                  Background="Transparent"
+                                  ScrollViewer.HorizontalScrollBarVisibility="Auto">
+                            <TreeView.ItemContainerStyle>
+                                <Style TargetType="TreeViewItem">
+                                    <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+                                    <Setter Property="IsSelected" Value="{Binding IsSelected, Mode=TwoWay}" />
+                                </Style>
+                            </TreeView.ItemContainerStyle>
+                            <TreeView.Resources>
+                                <HierarchicalDataTemplate DataType="{x:Type local:FileTreeItem}"
+                                                          ItemsSource="{Binding Children}">
+                                    <Border Background="Transparent"
+                                            MouseLeftButtonUp="FileTreeItem_MouseUp">
+                                        <Border.Style>
+                                            <Style TargetType="Border">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsActive}" Value="True">
+                                                        <Setter Property="Background"
+                                                                Value="{DynamicResource ChromeActiveBackground}" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Border.Style>
+                                        <StackPanel Orientation="Horizontal" Margin="0,1">
+                                            <TextBlock Text="{Binding Glyph}"
+                                                       FontFamily="Segoe MDL2 Assets"
+                                                       FontSize="13"
+                                                       VerticalAlignment="Center"
+                                                       Margin="0,0,6,0"
+                                                       Foreground="{DynamicResource ChromeSubText}" />
+                                            <TextBlock Text="{Binding Name}"
+                                                       VerticalAlignment="Center"
+                                                       Foreground="{DynamicResource ChromeText}" />
+                                        </StackPanel>
+                                    </Border>
+                                </HierarchicalDataTemplate>
+                            </TreeView.Resources>
+                        </TreeView>
+
+                        <TextBlock x:Name="TreeEmptyLabel"
+                                   Grid.Row="1"
+                                   Text="フォルダがありません"
+                                   Visibility="Collapsed"
+                                   Margin="12,10,12,0"
+                                   FontSize="12"
+                                   TextWrapping="Wrap"
+                                   VerticalAlignment="Top"
+                                   Foreground="{DynamicResource ChromeSubText}" />
+                    </Grid>
+
+                    <!-- 検索結果表示（検索が非空のとき） -->
+                    <Grid x:Name="SearchPane" Grid.Row="1" Visibility="Collapsed">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+
+                        <TextBlock x:Name="SearchSummary"
+                                   Grid.Row="0"
+                                   Margin="10,2,10,4"
+                                   FontSize="11"
+                                   TextWrapping="Wrap"
+                                   Foreground="{DynamicResource ChromeSubText}" />
+
+                        <ListBox x:Name="SearchResultsList"
+                                 Grid.Row="1"
+                                 BorderThickness="0"
+                                 Background="Transparent"
+                                 HorizontalContentAlignment="Stretch"
+                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                            <ListBox.ItemContainerStyle>
+                                <Style TargetType="ListBoxItem">
+                                    <EventSetter Event="MouseLeftButtonUp" Handler="SearchResult_MouseUp" />
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                    <Setter Property="Padding" Value="2" />
+                                    <Setter Property="Cursor" Value="Hand" />
+                                </Style>
+                            </ListBox.ItemContainerStyle>
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <StackPanel Margin="6,4" ToolTip="{Binding FullPath}">
+                                        <StackPanel Orientation="Horizontal">
+                                            <TextBlock Text="{Binding FileName}"
+                                                       FontWeight="SemiBold"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       Foreground="{DynamicResource ChromeText}" />
+                                            <TextBlock Text="{Binding HitCountLabel}"
+                                                       Margin="6,0,0,0"
+                                                       FontSize="11"
+                                                       Foreground="{DynamicResource ChromeAccent}" />
+                                        </StackPanel>
+                                        <TextBlock Text="{Binding RelativePath}"
+                                                   FontSize="11"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   Foreground="{DynamicResource ChromeSubText}" />
+                                        <ItemsControl ItemsSource="{Binding Hits}" Margin="0,2,0,0">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Text="{Binding Display}"
+                                                               FontSize="11"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               Foreground="{DynamicResource ChromeSubText}" />
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+
+                        <TextBlock x:Name="SearchEmptyLabel"
+                                   Grid.Row="1"
+                                   Text="一致する項目がありません"
+                                   Visibility="Collapsed"
+                                   Margin="12,10,12,0"
+                                   FontSize="12"
+                                   VerticalAlignment="Top"
+                                   Foreground="{DynamicResource ChromeSubText}" />
+                    </Grid>
+                </Grid>
+            </Border>
+
+            <GridSplitter x:Name="SidebarSplitter"
+                          Grid.Column="1"
+                          Width="4"
+                          Visibility="Collapsed"
+                          HorizontalAlignment="Center"
+                          VerticalAlignment="Stretch"
+                          Background="{DynamicResource ChromeBorder}"
+                          ResizeBehavior="PreviousAndNext"
+                          ResizeDirection="Columns" />
+
+            <Grid Grid.Column="2">
+                <!-- WebView2 を常設ホストする領域（再親子化を避けるため） -->
+                <Grid x:Name="WebViewHost" />
+
+                <!-- タブが無いときの案内 -->
+                <StackPanel x:Name="EmptyState"
+                            HorizontalAlignment="Center"
+                            VerticalAlignment="Center">
+                    <TextBlock Text="Markdown ファイルを開いてください"
+                               FontSize="18"
+                               Foreground="{DynamicResource ChromeTitleText}"
+                               HorizontalAlignment="Center" />
+                    <TextBlock Text="Ctrl+O で開く / ここにファイルをドラッグ＆ドロップ"
+                               FontSize="13"
+                               Foreground="{DynamicResource ChromeSubText}"
+                               Margin="0,10,0,0"
+                               HorizontalAlignment="Center" />
+                    <TextBlock Text="Ctrl+Shift+V でクリップボードから表示"
+                               FontSize="13"
+                               Foreground="{DynamicResource ChromeSubText}"
+                               Margin="0,4,0,0"
+                               HorizontalAlignment="Center" />
+                </StackPanel>
+            </Grid>
+        </Grid>
     </Grid>
 </Window>

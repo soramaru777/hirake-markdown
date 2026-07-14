@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Text;
@@ -8,10 +10,15 @@ namespace MdViewer;
 
 /// <summary>
 /// Markdown ファイルを読み込み、Assets/template.html と合成した完全な HTML を生成する。
-/// 画像・リンクの絶対パスは仮想ホスト doc.mdviewer 形式へ書き換える。
+/// 画像・リンクの絶対パスは仮想ホスト &lt;ドライブ小文字&gt;.doc.mdviewer 形式へ書き換える。
 /// </summary>
 public static class MarkdownRenderer
 {
+    /// <summary>
+    /// 仮想ホストのドメインサフィックス。実際のホストはドライブごとに
+    /// &lt;ドライブ小文字&gt;.doc.mdviewer（例: c.doc.mdviewer）となる。
+    /// C# 側がドライブごとに仮想ホストをマッピングする。
+    /// </summary>
     public const string DocHost = "doc.mdviewer";
 
     private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
@@ -28,9 +35,15 @@ public static class MarkdownRenderer
     /// <summary>
     /// 指定ファイルをレンダリングして完全な HTML 文字列を返す。
     /// </summary>
-    public static string Render(string filePath, string assetsDirectory)
+    /// <param name="theme">"dark" でダークテーマ、それ以外はライトテーマ。</param>
+    public static string Render(string filePath, string assetsDirectory, string theme = "light")
     {
         string markdown = ReadFileText(filePath);
+
+        // 先頭の YAML フロントマターを分離する（本文文字数・カード表示に使う）。
+        (string? frontMatterYaml, string bodyMarkdown) = SplitFrontMatter(markdown);
+
+        // Markdig 側は UseYamlFrontMatter によりフロントマターを HTML 出力しない。
         string bodyHtml = Markdown.ToHtml(markdown, Pipeline);
         bodyHtml = RewriteAbsolutePaths(bodyHtml, filePath);
 
@@ -38,10 +51,28 @@ public static class MarkdownRenderer
         string baseUrl = BuildBaseUrl(filePath);
         string template = LoadTemplate(assetsDirectory);
 
-        return template
-            .Replace("{{TITLE}}", WebUtility.HtmlEncode(fileName))
-            .Replace("{{BASE}}", baseUrl)
-            .Replace("{{BODY}}", bodyHtml);
+        string normalizedTheme =
+            string.Equals(theme, "dark", StringComparison.OrdinalIgnoreCase) ? "dark" : "light";
+        string frontMatterHtml = BuildFrontMatterCard(frontMatterYaml);
+        string metaHtml = BuildMetaBar(bodyMarkdown, filePath);
+
+        // プレースホルダ→値の辞書。単一パスで置換することで、先に注入した
+        // ユーザー由来コンテンツ（本文・フロントマター）にリテラル "{{META}}" 等が
+        // 含まれても再置換されない（逐次 .Replace だと後段のキーで壊れる）。
+        var replacements = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["TITLE"] = WebUtility.HtmlEncode(fileName),
+            ["BASE"] = baseUrl,
+            ["THEME"] = normalizedTheme,
+            ["FRONTMATTER"] = frontMatterHtml,
+            ["BODY"] = bodyHtml,
+            ["META"] = metaHtml,
+        };
+
+        return Regex.Replace(
+            template,
+            @"\{\{(TITLE|BASE|THEME|FRONTMATTER|BODY|META)\}\}",
+            match => replacements[match.Groups[1].Value]);
     }
 
     /// <summary>ファイルが見つからない場合などに表示する簡素な HTML。</summary>
@@ -97,16 +128,57 @@ public static class MarkdownRenderer
     }
 
     /// <summary>
+    /// ドライブ文字（小文字）から仮想ホスト名を組み立てる（例: 'C' → "c.doc.mdviewer"）。
+    /// ホスト命名規則の唯一の真実源。DocumentTab 側もこれを参照する。
+    /// </summary>
+    public static string BuildDocHost(char driveLetter)
+        => $"{char.ToLowerInvariant(driveLetter)}.{DocHost}";
+
+    /// <summary>
+    /// 仮想ホスト名 "&lt;letter&gt;.doc.mdviewer" からドライブ文字（大文字）を取り出す。
+    /// サブドメイン無しの旧 "doc.mdviewer" は該当しない（false を返す）。
+    /// </summary>
+    public static bool TryGetDriveFromDocHost(string host, out char drive)
+    {
+        drive = '\0';
+        if (string.IsNullOrEmpty(host))
+        {
+            return false;
+        }
+        string suffix = "." + DocHost;
+        if (!host.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+        string prefix = host.Substring(0, host.Length - suffix.Length);
+        if (prefix.Length == 1 && char.IsLetter(prefix[0]))
+        {
+            drive = char.ToUpperInvariant(prefix[0]);
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>
     /// {{BASE}} 用: ドライブルートからファイルのフォルダまでの相対パスを
-    /// https://doc.mdviewer/ 形式の URL に変換する（各セグメントを URL エスケープ）。
+    /// https://&lt;ドライブ小文字&gt;.doc.mdviewer/ 形式の URL に変換する
+    /// （各セグメントを URL エスケープ）。
     /// </summary>
     private static string BuildBaseUrl(string filePath)
     {
         string fullPath = Path.GetFullPath(filePath);
+
+        // ドライブ文字を取り出し、ホストのサブドメインに用いる。
+        string host = DocHost;
+        if (fullPath.Length >= 2 && fullPath[1] == ':' && char.IsLetter(fullPath[0]))
+        {
+            host = BuildDocHost(fullPath[0]);
+        }
+
         string? directory = Path.GetDirectoryName(fullPath);
         if (string.IsNullOrEmpty(directory))
         {
-            return $"https://{DocHost}/";
+            return $"https://{host}/";
         }
 
         string root = Path.GetPathRoot(fullPath) ?? string.Empty;
@@ -115,7 +187,7 @@ public static class MarkdownRenderer
             : string.Empty;
 
         var segments = relative.Split(new[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);
-        var sb = new StringBuilder($"https://{DocHost}/");
+        var sb = new StringBuilder($"https://{host}/");
         foreach (var segment in segments)
         {
             sb.Append(Uri.EscapeDataString(segment));
@@ -126,7 +198,7 @@ public static class MarkdownRenderer
 
     /// <summary>
     /// 変換後 HTML の src / href に含まれる Windows 絶対パス（C:\... や file:///C:/...）を
-    /// 同一ドライブなら https://doc.mdviewer/... 形式に書き換える。
+    /// https://&lt;ドライブ小文字&gt;.doc.mdviewer/... 形式に書き換える。
     /// </summary>
     private static string RewriteAbsolutePaths(string html, string filePath)
     {
@@ -179,9 +251,10 @@ public static class MarkdownRenderer
             return null;
         }
 
+        char drive = driveMatch.Groups["drive"].Value[0];
         string rest = driveMatch.Groups["rest"].Value;
         var segments = rest.Split(new[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);
-        var sb = new StringBuilder($"https://{DocHost}/");
+        var sb = new StringBuilder($"https://{BuildDocHost(drive)}/");
         for (int i = 0; i < segments.Length; i++)
         {
             sb.Append(Uri.EscapeDataString(segments[i]));
@@ -190,6 +263,167 @@ public static class MarkdownRenderer
                 sb.Append('/');
             }
         }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// 先頭の YAML フロントマター（--- ～ --- または ...）を分離する。
+    /// 戻り値は (フロントマター本文, フロントマターを除いた残り本文)。
+    /// フロントマターが無ければ (null, 元テキスト)。
+    /// </summary>
+    private static (string? Yaml, string Body) SplitFrontMatter(string markdown)
+    {
+        if (string.IsNullOrEmpty(markdown))
+        {
+            return (null, markdown ?? string.Empty);
+        }
+
+        // 文頭の "---" 行から、次の "---" または "..." 行までを 1 ブロックとする。
+        // （BOM は ReadFileText で除去済みのため考慮不要。）
+        var match = Regex.Match(
+            markdown,
+            "\\A---[ \\t]*\\r?\\n(?<yaml>.*?)\\r?\\n(?:---|\\.\\.\\.)[ \\t]*(?:\\r?\\n|\\z)",
+            RegexOptions.Singleline);
+
+        if (!match.Success)
+        {
+            return (null, markdown);
+        }
+
+        string yaml = match.Groups["yaml"].Value;
+        string body = markdown.Substring(match.Length);
+        return (yaml, body);
+    }
+
+    /// <summary>
+    /// フロントマター本文を折りたたみカード（details）に整形する。
+    /// トップレベルの key: value はテーブル、解釈できない構造は pre フォールバック。
+    /// フロントマターが無ければ空文字を返す。必ず HTML エンコードする。
+    /// </summary>
+    private static string BuildFrontMatterCard(string? yaml)
+    {
+        if (string.IsNullOrWhiteSpace(yaml))
+        {
+            return string.Empty;
+        }
+
+        var rows = new List<KeyValuePair<string, string>>();
+        bool parseable = true;
+
+        var lines = yaml.Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
+        foreach (var line in lines)
+        {
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                continue;
+            }
+            // コメント行はスキップ。
+            if (line.TrimStart().StartsWith("#"))
+            {
+                continue;
+            }
+            // トップレベルのみ対象（インデント行はネスト構造とみなす）。
+            if (line[0] == ' ' || line[0] == '\t')
+            {
+                parseable = false;
+                break;
+            }
+
+            int colon = line.IndexOf(':');
+            if (colon <= 0)
+            {
+                parseable = false;
+                break;
+            }
+
+            string key = line.Substring(0, colon).Trim();
+            string value = line.Substring(colon + 1).Trim();
+            if (key.Length == 0 || value.Length == 0)
+            {
+                // 値が空 = ネストブロックの開始などとみなし、そのまま pre 表示に回す。
+                parseable = false;
+                break;
+            }
+
+            rows.Add(new KeyValuePair<string, string>(key, value));
+        }
+
+        var sb = new StringBuilder();
+        sb.Append("<details class=\"mdv-frontmatter\" open>");
+        sb.Append("<summary>フロントマター</summary>");
+        sb.Append("<div class=\"mdv-frontmatter-body\">");
+
+        if (parseable && rows.Count > 0)
+        {
+            sb.Append("<table><tbody>");
+            foreach (var row in rows)
+            {
+                sb.Append("<tr><th>");
+                sb.Append(WebUtility.HtmlEncode(row.Key));
+                sb.Append("</th><td>");
+                sb.Append(WebUtility.HtmlEncode(row.Value));
+                sb.Append("</td></tr>");
+            }
+            sb.Append("</tbody></table>");
+        }
+        else
+        {
+            sb.Append("<pre>");
+            sb.Append(WebUtility.HtmlEncode(yaml.TrimEnd('\r', '\n')));
+            sb.Append("</pre>");
+        }
+
+        sb.Append("</div></details>");
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// 画面右下のメタ情報チップ（文字数・読了目安・最終更新日時）を組み立てる。
+    /// 文字数はフロントマターを除いた本文の非空白文字数。読了目安は 600字/分で切り上げ。
+    /// </summary>
+    private static string BuildMetaBar(string bodyMarkdown, string filePath)
+    {
+        int charCount = 0;
+        if (!string.IsNullOrEmpty(bodyMarkdown))
+        {
+            foreach (char ch in bodyMarkdown)
+            {
+                if (!char.IsWhiteSpace(ch))
+                {
+                    charCount++;
+                }
+            }
+        }
+
+        int minutes = charCount == 0 ? 0 : (int)Math.Ceiling(charCount / 600.0);
+
+        string lastWrite;
+        try
+        {
+            lastWrite = File.GetLastWriteTime(filePath).ToString("yyyy/MM/dd HH:mm", CultureInfo.InvariantCulture);
+        }
+        catch
+        {
+            lastWrite = string.Empty;
+        }
+
+        var sb = new StringBuilder();
+        sb.Append("<div class=\"mdv-meta\" aria-hidden=\"true\">");
+        sb.Append("<span class=\"mdv-meta-item\">");
+        sb.Append(charCount.ToString("N0", CultureInfo.InvariantCulture));
+        sb.Append(" 文字</span>");
+        sb.Append("<span class=\"mdv-meta-sep\">|</span>");
+        sb.Append("<span class=\"mdv-meta-item\">約");
+        sb.Append(minutes.ToString(CultureInfo.InvariantCulture));
+        sb.Append("分</span>");
+        if (lastWrite.Length > 0)
+        {
+            sb.Append("<span class=\"mdv-meta-sep\">|</span>");
+            sb.Append("<span class=\"mdv-meta-item\">");
+            sb.Append(WebUtility.HtmlEncode(lastWrite));
+            sb.Append("</span>");
+        }
+        sb.Append("</div>");
         return sb.ToString();
     }
 }
