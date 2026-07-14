@@ -1,18 +1,18 @@
 ﻿#requires -Version 5.1
 <#
 .SYNOPSIS
-    MdViewer を .md / .markdown ファイルの「プログラムから開く」候補として HKCU に登録します。
+    Hirake を .md / .markdown ファイルの「プログラムから開く」候補として HKCU に登録します。
     管理者権限は不要です（HKCU のみを使用）。
 
 .PARAMETER ExePath
-    MdViewer.exe への明示パス。省略時は以下の順で自動検出します。
-      1. <スクリプトの親>\publish\MdViewer.exe
-      2. <スクリプトの親>\src\MdViewer\bin\Release\net10.0-windows\MdViewer.exe
+    Hirake.exe への明示パス。省略時は以下の順で自動検出します。
+      1. <スクリプトの親>\publish\Hirake.exe
+      2. <スクリプトの親>\src\Hirake\bin\Release\net10.0-windows\Hirake.exe
     どちらも見つからない場合はエラーを表示して終了します。
 
 .EXAMPLE
     .\register.ps1
-    .\register.ps1 -ExePath "C:\Tools\MdViewer\MdViewer.exe"
+    .\register.ps1 -ExePath "C:\Tools\Hirake\Hirake.exe"
 #>
 
 [CmdletBinding()]
@@ -23,7 +23,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-function Resolve-MdViewerExePath {
+function Resolve-HirakeExePath {
     param([string]$Explicit)
 
     if ($Explicit) {
@@ -34,45 +34,70 @@ function Resolve-MdViewerExePath {
         exit 1
     }
 
-    $candidate1 = Join-Path $PSScriptRoot '..\publish\MdViewer.exe'
+    $candidate1 = Join-Path $PSScriptRoot '..\publish\Hirake.exe'
     if (Test-Path -LiteralPath $candidate1 -PathType Leaf) {
         return (Resolve-Path -LiteralPath $candidate1).ProviderPath
     }
 
-    $candidate2 = Join-Path $PSScriptRoot '..\src\MdViewer\bin\Release\net10.0-windows\MdViewer.exe'
+    $candidate2 = Join-Path $PSScriptRoot '..\src\Hirake\bin\Release\net10.0-windows\Hirake.exe'
     if (Test-Path -LiteralPath $candidate2 -PathType Leaf) {
         return (Resolve-Path -LiteralPath $candidate2).ProviderPath
     }
 
     Write-Error @"
-MdViewer.exe が見つかりませんでした。以下のいずれかの方法で解決してください。
+Hirake.exe が見つかりませんでした。以下のいずれかの方法で解決してください。
   1. -ExePath パラメータで exe のフルパスを明示指定する
   2. 次のいずれかの場所に exe を配置してビルドする
-       $((Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).ProviderPath)\publish\MdViewer.exe
-       $((Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).ProviderPath)\src\MdViewer\bin\Release\net10.0-windows\MdViewer.exe
+       $((Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).ProviderPath)\publish\Hirake.exe
+       $((Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).ProviderPath)\src\Hirake\bin\Release\net10.0-windows\Hirake.exe
 "@
     exit 1
 }
 
 # SHChangeNotify を P/Invoke で呼び出し、エクスプローラーに関連付け変更を通知する
 function Send-ShellChangeNotification {
-    if (-not ('MdViewer.NativeMethods' -as [type])) {
-        Add-Type -Namespace MdViewer -Name NativeMethods -MemberDefinition @'
+    if (-not ('Hirake.NativeMethods' -as [type])) {
+        Add-Type -Namespace Hirake -Name NativeMethods -MemberDefinition @'
 [System.Runtime.InteropServices.DllImport("shell32.dll")]
 public static extern void SHChangeNotify(long wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);
 '@
     }
     $SHCNE_ASSOCCHANGED = 0x08000000
     $SHCNF_IDLIST = 0x0000
-    [MdViewer.NativeMethods]::SHChangeNotify($SHCNE_ASSOCCHANGED, $SHCNF_IDLIST, [IntPtr]::Zero, [IntPtr]::Zero)
+    [Hirake.NativeMethods]::SHChangeNotify($SHCNE_ASSOCCHANGED, $SHCNF_IDLIST, [IntPtr]::Zero, [IntPtr]::Zero)
 }
 
-$resolvedExePath = Resolve-MdViewerExePath -Explicit $ExePath
-Write-Host "MdViewer.exe を検出しました: $resolvedExePath"
+$resolvedExePath = Resolve-HirakeExePath -Explicit $ExePath
+Write-Host "Hirake.exe を検出しました: $resolvedExePath"
 
-$progId = 'MdViewer.md'
+$progId = 'Hirake.md'
 $progIdKey = "HKCU:\Software\Classes\$progId"
 $openCommand = "`"$resolvedExePath`" `"%1`""
+
+# 0. 旧名（MdViewer.md）で登録済みの関連付けを移行・削除
+$legacyProgId = 'MdViewer.md'
+$legacyProgIdKey = "HKCU:\Software\Classes\$legacyProgId"
+if (Test-Path $legacyProgIdKey) {
+    Remove-Item -Path $legacyProgIdKey -Recurse -Force
+    Write-Host "旧 ProgId '$legacyProgId' を削除しました。"
+}
+foreach ($ext in @('.md', '.markdown')) {
+    $extKey = "HKCU:\Software\Classes\$ext"
+    $openWithKey = "$extKey\OpenWithProgIds"
+    if (Test-Path $openWithKey) {
+        try { Remove-ItemProperty -Path $openWithKey -Name $legacyProgId -ErrorAction Stop } catch {}
+    }
+    # 既定プログラムが旧 ProgId の場合はクリアし、後続の手順 3 で新 ProgId を設定させる
+    if (Test-Path $extKey) {
+        try {
+            $current = (Get-ItemProperty -Path $extKey -Name '(default)' -ErrorAction Stop).'(default)'
+            if ($current -eq $legacyProgId) {
+                Remove-ItemProperty -Path $extKey -Name '(default)' -ErrorAction Stop
+                Write-Host "'$ext' の既定プログラム（旧 '$legacyProgId'）をクリアしました。"
+            }
+        } catch {}
+    }
+}
 
 # 1. ProgId の登録
 New-Item -Path $progIdKey -Force | Out-Null
@@ -120,9 +145,9 @@ Send-ShellChangeNotification
 
 Write-Host ''
 Write-Host '===================================================================='
-Write-Host 'MdViewer の関連付け登録が完了しました。'
+Write-Host 'Hirake の関連付け登録が完了しました。'
 Write-Host 'Windows 11 では初回のみ、.md ファイルを右クリック →'
 Write-Host '「プログラムから開く」→「別のプログラムを選択」→'
-Write-Host 'MdViewer を選び「常にこのアプリを使う」にチェックを入れる操作が'
+Write-Host 'Hirake を選び「常にこのアプリを使う」にチェックを入れる操作が'
 Write-Host '必要な場合があります。'
 Write-Host '===================================================================='

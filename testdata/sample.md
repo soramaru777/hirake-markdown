@@ -1,6 +1,6 @@
-# MdViewer 動作確認用サンプル
+# Hirake 動作確認用サンプル
 
-このファイルは MdViewer の表示機能を一通り確認するためのテストデータです。見出し・強調・リスト・テーブル・コードブロック・mermaid 図・画像・リンクなどを含みます。
+このファイルは Hirake の表示機能を一通り確認するためのテストデータです。見出し・強調・リスト・テーブル・コードブロック・mermaid 図・画像・リンクなどを含みます。
 
 ## 目次確認用の見出し
 
@@ -8,7 +8,7 @@
 
 ### 概要
 
-MdViewer は WPF + WebView2 で構築された Markdown ビューアです。
+Hirake は WPF + WebView2 で構築された Markdown ビューアです。
 
 ### 特徴
 
@@ -76,7 +76,7 @@ MdViewer は WPF + WebView2 で構築された Markdown ビューアです。
 ```csharp
 using System;
 
-namespace MdViewer.Sample
+namespace Hirake.Sample
 {
     public class Greeter
     {
@@ -103,7 +103,7 @@ def greet(name: str) -> str:
 
 
 if __name__ == "__main__":
-    print(greet("MdViewer"))
+    print(greet("Hirake"))
 ```
 
 ## mermaid フローチャート
@@ -131,4 +131,4 @@ graph TD
 
 ## まとめ
 
-以上で MdViewer の主要な表示機能（見出し・目次・強調・リスト・テーブル・引用・水平線・コードハイライト・mermaid・画像・リンク）の確認用データは終了です。
+以上で Hirake の主要な表示機能（見出し・目次・強調・リスト・テーブル・引用・水平線・コードハイライト・mermaid・画像・リンク）の確認用データは終了です。
