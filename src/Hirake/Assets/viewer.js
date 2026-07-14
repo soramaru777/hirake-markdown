@@ -81,6 +81,123 @@
   var searchCloseBtn = document.getElementById('search-close');
 
   /* ==========================================================
+   * ソースマップ（Markdown ソース行 ↔ DOM の双方向対応）
+   *
+   * C# 側（MarkdownRenderer）が各ブロック要素に付与した data-src-line
+   * （フロントマター込み原文の 1 始まり行番号）を収集し、
+   * sourceToDom / domToSource の双方向 API を提供する。
+   * 目次の現在位置判定・スクロール位置の保存復元もこの基盤に乗る。
+   * ========================================================== */
+
+  // {el, line} を line 昇順で保持する。行とドキュメント内位置は
+  // どちらも文書の下に向かって単調増加するため、二分探索できる。
+  var srcMapEntries = [];
+
+  function collectSourceMap() {
+    srcMapEntries = [];
+    if (!article) return;
+    var nodes = article.querySelectorAll('[data-src-line]');
+    Array.prototype.forEach.call(nodes, function (el) {
+      var line = parseInt(el.getAttribute('data-src-line'), 10);
+      if (isFinite(line)) {
+        srcMapEntries.push({ el: el, line: line });
+      }
+    });
+    srcMapEntries.sort(function (a, b) { return a.line - b.line; });
+  }
+
+  // 要素のドキュメント座標での上端。offsetTop は offsetParent 基準のため
+  // 入れ子要素（テーブルセル等）で狂う。rect ベースで統一する。
+  function docTop(el) {
+    return el.getBoundingClientRect().top + window.scrollY;
+  }
+
+  // items のうち topOf(item) <= probe を満たす最後のインデックスを返す（無ければ -1）。
+  // 目次の現在位置判定と domToSource が共用する二分探索。
+  function lastIndexAbove(items, probe, topOf) {
+    var lo = 0;
+    var hi = items.length - 1;
+    var found = -1;
+    while (lo <= hi) {
+      var mid = (lo + hi) >> 1;
+      if (topOf(items[mid]) <= probe) {
+        found = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    return found;
+  }
+
+  // ソース行 → その行を含む（＝その行以前で最も近い）ブロック要素。
+  function sourceToDom(line) {
+    if (!srcMapEntries.length || !isFinite(line)) return null;
+    var lo = 0;
+    var hi = srcMapEntries.length - 1;
+    var found = 0; // line が先頭ブロックより前なら先頭を返す
+    while (lo <= hi) {
+      var mid = (lo + hi) >> 1;
+      if (srcMapEntries[mid].line <= line) {
+        found = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    return srcMapEntries[found].el;
+  }
+
+  // DOM → ソース行。要素を渡すと自身または祖先の data-src-line、
+  // 数値（ドキュメントY座標）を渡すとその位置に表示中のブロックの行を返す。
+  function domToSource(target) {
+    if (target && target.nodeType === 1) {
+      var holder = target.closest ? target.closest('[data-src-line]') : null;
+      if (!holder) return null;
+      var line = parseInt(holder.getAttribute('data-src-line'), 10);
+      return isFinite(line) ? line : null;
+    }
+    if (typeof target === 'number' && isFinite(target)) {
+      var idx = lastIndexAbove(srcMapEntries, target + 12, function (entry) {
+        return docTop(entry.el);
+      });
+      return idx >= 0 ? srcMapEntries[idx].line : null;
+    }
+    return null;
+  }
+
+  // 現在のスクロール位置を「ソース行 + ブロック内オフセット」で表す。
+  // y はソースマップが使えない場合のフォールバック。
+  function getScrollState() {
+    var y = window.scrollY;
+    var idx = lastIndexAbove(srcMapEntries, y + 12, function (entry) {
+      return docTop(entry.el);
+    });
+    if (idx < 0) return { y: y, line: null, offset: 0 };
+    var entry = srcMapEntries[idx];
+    return { y: y, line: entry.line, offset: y - docTop(entry.el) };
+  }
+
+  // getScrollState の状態からスクロール先 Y を再計算する。
+  // 呼び出し時点のレイアウトで毎回計算し直すのが肝
+  // （mermaid 描画等でレイアウトが変わっても行位置に追従できる）。
+  function computeStateTarget(state) {
+    if (state && typeof state.line === 'number' && isFinite(state.line)) {
+      var el = sourceToDom(state.line);
+      if (el) {
+        var offset = (typeof state.offset === 'number' && isFinite(state.offset))
+          ? state.offset : 0;
+        return Math.max(0, docTop(el) + offset);
+      }
+    }
+    return (state && typeof state.y === 'number' && isFinite(state.y)) ? state.y : 0;
+  }
+
+  window.sourceToDom = sourceToDom;
+  window.domToSource = domToSource;
+  window.__mdvGetScrollState = getScrollState;
+
+  /* ==========================================================
    * 目次サイドバー
    * ========================================================== */
 
@@ -214,17 +331,14 @@
 
     // オフセットが大きいと、短いセクションの先頭にスクロールした時に
     // 次の見出しが選ばれてしまうため、小さな余裕だけ持たせる。
-    var probe = window.scrollY + 12;
-    var activeId = tocHeadings[0].id || null;
+    var idx = lastIndexAbove(tocHeadings, window.scrollY + 12, docTop);
 
-    for (var i = 0; i < tocHeadings.length; i++) {
-      var heading = tocHeadings[i];
-      if (heading.offsetTop <= probe) {
-        activeId = heading.id || activeId;
-      } else {
-        break;
-      }
-    }
+    // id を持たない見出しはアクティブにできないため、直前の見出しへ遡る。
+    while (idx > 0 && !tocHeadings[idx].id) idx--;
+
+    var activeId = idx >= 0
+      ? (tocHeadings[idx].id || null)
+      : (tocHeadings[0].id || null);
 
     setActiveHeading(activeId);
   }
@@ -514,6 +628,10 @@
       div.textContent = source;
       // テーマ切替時の再描画に備え、元ソースを保持しておく。
       div._mdvMermaidSource = source;
+      // ソースマップ属性を引き継ぐ（pre 置換で失われるため）。
+      // data-src-line は Markdig のコードブロックレンダラにより code 側に付く。
+      var srcLine = code.getAttribute('data-src-line') || pre.getAttribute('data-src-line');
+      if (srcLine) div.setAttribute('data-src-line', srcLine);
       pre.parentNode.replaceChild(div, pre);
       mermaidDivs.push(div);
     });
@@ -674,10 +792,11 @@
   // ホストから呼ばれるスクロール復元。即座に scrollTo し、
   // Mermaid 描画完了（レイアウト変動後）にもう一度適用する。
   // ただしその間にユーザーが手動スクロールしたら再適用しない。
-  function restoreScroll(y) {
+  // computeTarget はスクロール先 Y を返す関数。再適用時にも呼び直すことで、
+  // レイアウト変動後の位置（ソース行ベース）に追従できる。
+  function restoreScrollBy(computeTarget) {
     safeRun(function () {
-      var target = (typeof y === 'number' && isFinite(y)) ? y : 0;
-      window.scrollTo(0, target);
+      window.scrollTo(0, computeTarget());
 
       var cancelled = false;
       var done = false;
@@ -712,7 +831,7 @@
         if (done) return;
         done = true;
         if (!cancelled) {
-          window.scrollTo(0, target);
+          window.scrollTo(0, computeTarget());
         }
         cleanup();
       }
@@ -730,7 +849,23 @@
     });
   }
 
+  // 旧来のピクセル位置ベースの復元（初回オープン時の永続化位置に使用）。
+  function restoreScroll(y) {
+    restoreScrollBy(function () {
+      return (typeof y === 'number' && isFinite(y)) ? y : 0;
+    });
+  }
+
+  // ソース行ベースの復元（自動リロード時に使用）。
+  // state は __mdvGetScrollState が返した {y, line, offset}。
+  function restoreScrollState(state) {
+    restoreScrollBy(function () {
+      return computeStateTarget(state);
+    });
+  }
+
   window.__mdvRestoreScroll = restoreScroll;
+  window.__mdvRestoreScrollState = restoreScrollState;
 
   /* ==========================================================
    * 印刷
@@ -870,6 +1005,9 @@
     safeRun(function () {
       convertMermaidBlocks();
     });
+
+    // 1.5 ソースマップ収集は DOM 構造変更（mermaid の pre→div 置換）の後に行う。
+    safeRun(collectSourceMap);
 
     // 2. シンタックスハイライトと数式は mermaid 変換後・目次生成前に実施する。
     safeRun(applyHighlighting);

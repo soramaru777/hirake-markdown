@@ -485,7 +485,12 @@ public sealed class DocumentTab : IDisposable
     {
         try
         {
-            string raw = await WebView.CoreWebView2.ExecuteScriptAsync("window.scrollY").ConfigureAwait(true);
+            // ソースマップ基盤の {y, line, offset} を取得する（viewer.js 未初期化なら scrollY のみ）。
+            // 行ベースで復元すると、文書の途中が編集されても表示位置が維持される。
+            string raw = await WebView.CoreWebView2.ExecuteScriptAsync(
+                "(function(){try{return typeof window.__mdvGetScrollState==='function'"
+                + "?window.__mdvGetScrollState():window.scrollY;}"
+                + "catch(e){return window.scrollY;}})()").ConfigureAwait(true);
             _restoreScrollRaw = raw;
         }
         catch
@@ -547,11 +552,19 @@ public sealed class DocumentTab : IDisposable
             string raw = _restoreScrollRaw;
             _restoreScrollRaw = null;
             _initialScrollRestored = true;
-            if (!string.IsNullOrEmpty(raw) && raw != "null"
-                && double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out double y))
+            if (!string.IsNullOrEmpty(raw) && raw != "null")
             {
-                // 初回ロードと同じ復元経路を使い、mermaid 再描画後のレイアウト変動にも追従させる。
-                RestoreSavedScroll(core, y);
+                if (raw.StartsWith("{", StringComparison.Ordinal)
+                    && raw.EndsWith("}", StringComparison.Ordinal))
+                {
+                    // ソース行ベースの復元（{y, line, offset}）。
+                    RestoreSavedScrollState(core, raw);
+                }
+                else if (double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out double y))
+                {
+                    // 旧来のピクセル位置フォールバック。
+                    RestoreSavedScroll(core, y);
+                }
             }
             return;
         }
@@ -566,6 +579,20 @@ public sealed class DocumentTab : IDisposable
                 RestoreSavedScroll(core, saved.Value);
             }
         }
+    }
+
+    /// <summary>
+    /// ソース行ベースのスクロール復元。stateJson は自前の __mdvGetScrollState が返した
+    /// JSON（ExecuteScriptAsync の戻り値そのまま）なので、JS オブジェクトリテラルとして安全に埋め込める。
+    /// </summary>
+    private static void RestoreSavedScrollState(CoreWebView2 core, string stateJson)
+    {
+        string script =
+            "(function(){var s=" + stateJson + ";"
+            + "try{if(typeof window.__mdvRestoreScrollState==='function'){"
+            + "window.__mdvRestoreScrollState(s);}else{window.scrollTo(0,(s&&s.y)||0);}}"
+            + "catch(e){try{window.scrollTo(0,(s&&s.y)||0);}catch(e2){}}})();";
+        _ = core.ExecuteScriptAsync(script);
     }
 
     private static void RestoreSavedScroll(CoreWebView2 core, double y)

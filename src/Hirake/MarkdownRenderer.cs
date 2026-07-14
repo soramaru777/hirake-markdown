@@ -5,6 +5,9 @@ using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
 using Markdig;
+using Markdig.Renderers;
+using Markdig.Renderers.Html;
+using Markdig.Syntax;
 
 namespace Hirake;
 
@@ -44,7 +47,7 @@ public static class MarkdownRenderer
         (string? frontMatterYaml, string bodyMarkdown) = SplitFrontMatter(markdown);
 
         // Markdig 側は UseYamlFrontMatter によりフロントマターを HTML 出力しない。
-        string bodyHtml = Markdown.ToHtml(markdown, Pipeline);
+        string bodyHtml = RenderBodyWithSourceMap(markdown);
         bodyHtml = RewriteAbsolutePaths(bodyHtml, filePath);
 
         string fileName = Path.GetFileName(filePath);
@@ -73,6 +76,35 @@ public static class MarkdownRenderer
             template,
             @"\{\{(TITLE|BASE|THEME|FRONTMATTER|BODY|META)\}\}",
             match => replacements[match.Groups[1].Value]);
+    }
+
+    /// <summary>
+    /// Markdown を HTML に変換し、全ブロック要素に data-src-line 属性
+    /// （フロントマター込みの原文における 1 始まりの行番号）を付与する。
+    /// viewer.js の sourceToDom / domToSource（ソースマップ基盤）が参照する。
+    /// HTML ブロックは Markdig のレンダラが属性を出力しないため対象外。
+    /// </summary>
+    private static string RenderBodyWithSourceMap(string markdown)
+    {
+        MarkdownDocument document = Markdown.Parse(markdown, Pipeline);
+
+        foreach (MarkdownObject item in document.Descendants())
+        {
+            if (item is not Block block)
+            {
+                continue;
+            }
+            // Line は 0 始まり。ファイル行と揃えるため 1 始まりで出力する。
+            block.GetAttributes().AddProperty(
+                "data-src-line", (block.Line + 1).ToString(CultureInfo.InvariantCulture));
+        }
+
+        var writer = new StringWriter();
+        var renderer = new HtmlRenderer(writer);
+        Pipeline.Setup(renderer);
+        renderer.Render(document);
+        writer.Flush();
+        return writer.ToString();
     }
 
     /// <summary>ファイルが見つからない場合などに表示する簡素な HTML。</summary>
