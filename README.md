@@ -107,4 +107,4 @@ Copyright (c) 2026 soramaru777
 | [mermaid](https://github.com/mermaid-js/mermaid) | 図の描画 | MIT |
 | [KaTeX](https://github.com/KaTeX/KaTeX)（同梱フォント含む） | 数式レンダリング | MIT |
 
-highlight.js / mermaid / KaTeX は `src/MdViewer/Assets/vendor/` にミニファイ済みファイルを同梱しています。各ライセンスの全文はそれぞれのリンク先リポジトリを参照してください。
+highlight.js / mermaid / KaTeX は `src/MdViewer/Assets/vendor/` にミニファイ済みファイルを同梱しています。各ライセンスの全文は [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) を参照してください。
