@@ -3,7 +3,7 @@ using System.Windows;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 
-namespace MdViewer;
+namespace Hirake;
 
 public partial class App : Application
 {
@@ -27,7 +27,7 @@ public partial class App : Application
     {
         string userDataFolder = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "MdViewer",
+            "Hirake",
             "WebView2");
         Directory.CreateDirectory(userDataFolder);
         return CoreWebView2Environment.CreateAsync(null, userDataFolder, null);
@@ -129,7 +129,7 @@ public partial class App : Application
     {
         MessageBox.Show(
             e.Exception.ToString(),
-            "MdViewer - 予期しないエラー",
+            "Hirake - 予期しないエラー",
             MessageBoxButton.OK,
             MessageBoxImage.Error);
         e.Handled = true;
@@ -140,7 +140,7 @@ public partial class App : Application
         var ex = e.ExceptionObject as Exception;
         MessageBox.Show(
             ex?.ToString() ?? "不明なエラー",
-            "MdViewer - 致命的なエラー",
+            "Hirake - 致命的なエラー",
             MessageBoxButton.OK,
             MessageBoxImage.Error);
     }

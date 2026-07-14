@@ -5,7 +5,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Win32;
 
-namespace MdViewer;
+namespace Hirake;
 
 /// <summary>1 ファイル分の表示状態（スクロール位置・最終オープン日時）。</summary>
 public sealed class FileState
@@ -27,7 +27,7 @@ public sealed class SettingsData
 }
 
 /// <summary>
-/// アプリ全体の設定を <c>%LocalAppData%\MdViewer\settings.json</c> へ永続化する。
+/// アプリ全体の設定を <c>%LocalAppData%\Hirake\settings.json</c> へ永続化する。
 /// スレッドセーフ（lock 保護）で、変更後 1 秒デバウンスで自動保存する。
 /// 壊れた JSON は既定値で復旧する。全体で 1 インスタンス（<see cref="Instance"/>）を共有する。
 /// </summary>
@@ -55,7 +55,7 @@ public sealed class SettingsStore
     {
         string directory = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "MdViewer");
+            "Hirake");
         _filePath = Path.Combine(directory, "settings.json");
         _data = Load();
     }

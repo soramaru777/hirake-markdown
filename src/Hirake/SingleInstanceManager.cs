@@ -2,7 +2,7 @@ using System.IO;
 using System.IO.Pipes;
 using System.Text;
 
-namespace MdViewer;
+namespace Hirake;
 
 /// <summary>
 /// 名前付き Mutex による二重起動制御と、名前付きパイプによるプロセス間ファイルパス転送。
@@ -10,8 +10,8 @@ namespace MdViewer;
 /// </summary>
 public sealed class SingleInstanceManager : IDisposable
 {
-    private const string MutexName = "MdViewer_SingleInstance_Mutex";
-    private const string PipeName = "MdViewer_Pipe";
+    private const string MutexName = "Hirake_SingleInstance_Mutex";
+    private const string PipeName = "Hirake_Pipe";
 
     private readonly Mutex _mutex;
     private CancellationTokenSource? _serverCts;

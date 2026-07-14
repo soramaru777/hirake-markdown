@@ -7,7 +7,7 @@ using System.Windows;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 
-namespace MdViewer;
+namespace Hirake;
 
 /// <summary>DocumentTab から MainWindow へ依頼するための最小インターフェース。</summary>
 public interface IDocumentTabHost
@@ -31,10 +31,10 @@ public interface IDocumentTabHost
 /// </summary>
 public sealed class DocumentTab : IDisposable
 {
-    private const string AssetsHost = "assets.mdviewer";
-    private const string TempHost = "temp.mdviewer";
+    private const string AssetsHost = "assets.hirake";
+    private const string TempHost = "temp.hirake";
 
-    // doc 仮想ホストの命名規則（"doc.mdviewer" / "&lt;letter&gt;.doc.mdviewer"）は
+    // doc 仮想ホストの命名規則（"doc.hirake" / "&lt;letter&gt;.doc.hirake"）は
     // MarkdownRenderer を唯一の真実源とし、そこから参照する（重複実装を避ける）。
 
     // マップ対象ドライブのルートパス列挙はプロセス内で1回だけ行う（タブごとの再列挙を避ける）。
@@ -105,7 +105,7 @@ public sealed class DocumentTab : IDisposable
         core.SetVirtualHostNameToFolderMapping(
             TempHost, _tempDirectory, CoreWebView2HostResourceAccessKind.Allow);
 
-        // ドキュメント用: 各固定ドライブを "<ドライブ文字小文字>.doc.mdviewer" にマップし、
+        // ドキュメント用: 各固定ドライブを "<ドライブ文字小文字>.doc.hirake" にマップし、
         // 別ドライブへの絶対パスリンクも解決できるようにする。
         MapDocumentDrives(core);
 
@@ -165,7 +165,7 @@ public sealed class DocumentTab : IDisposable
         return roots;
     }
 
-    /// <summary>Ready な各ドライブを "&lt;letter&gt;.doc.mdviewer" にマップする。</summary>
+    /// <summary>Ready な各ドライブを "&lt;letter&gt;.doc.hirake" にマップする。</summary>
     private void MapDocumentDrives(CoreWebView2 core)
     {
         var mapped = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -201,7 +201,7 @@ public sealed class DocumentTab : IDisposable
         // 自ファイルのドライブは必ずマップする（列挙後にドライブが増えた場合の保険）。
         MapDrive(_driveRoot);
 
-        // 旧 doc.mdviewer（サブドメイン無し）の後方互換マッピング。
+        // 旧 doc.hirake（サブドメイン無し）の後方互換マッピング。
         if (!string.IsNullOrEmpty(_driveRoot))
         {
             try
@@ -685,7 +685,7 @@ public sealed class DocumentTab : IDisposable
         || host.Equals(TempHost, StringComparison.OrdinalIgnoreCase)
         || IsDocHost(host);
 
-    /// <summary>doc.mdviewer 本体、または "&lt;letter&gt;.doc.mdviewer" を内部ホストとみなす。</summary>
+    /// <summary>doc.hirake 本体、または "&lt;letter&gt;.doc.hirake" を内部ホストとみなす。</summary>
     private static bool IsDocHost(string host) =>
         host.Equals(MarkdownRenderer.DocHost, StringComparison.OrdinalIgnoreCase)
         || host.EndsWith("." + MarkdownRenderer.DocHost, StringComparison.OrdinalIgnoreCase);
@@ -710,8 +710,8 @@ public sealed class DocumentTab : IDisposable
 
     /// <summary>
     /// ホスト名からドライブルートを求める。
-    /// "&lt;letter&gt;.doc.mdviewer" → "&lt;LETTER&gt;:\"、
-    /// 旧 "doc.mdviewer" は表示ファイルのドライブルート（後方互換）。
+    /// "&lt;letter&gt;.doc.hirake" → "&lt;LETTER&gt;:\"、
+    /// 旧 "doc.hirake" は表示ファイルのドライブルート（後方互換）。
     /// </summary>
     private string GetDriveRootFromHost(string host)
     {

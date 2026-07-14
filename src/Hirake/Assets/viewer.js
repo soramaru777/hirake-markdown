@@ -1,5 +1,5 @@
 /*
- * MdViewer - viewer.js
+ * Hirake - viewer.js
  *
  * 役割:
  *   - 目次サイドバーの生成・開閉・現在地ハイライト
@@ -60,7 +60,7 @@
     } catch (err) {
       // 個別機能の失敗が他の初期化処理を止めないようにする。
       if (window.console && console.error) {
-        console.error('[MdViewer]', err);
+        console.error('[Hirake]', err);
       }
     }
   }

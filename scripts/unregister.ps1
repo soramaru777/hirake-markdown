@@ -1,7 +1,7 @@
 ﻿#requires -Version 5.1
 <#
 .SYNOPSIS
-    register.ps1 で作成した MdViewer の .md / .markdown 関連付け（HKCU）を削除します。
+    register.ps1 で作成した Hirake の .md / .markdown 関連付け（HKCU）を削除します。
     管理者権限は不要です。他アプリが設定した既定プログラムには影響しません。
 #>
 
@@ -12,21 +12,21 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 function Send-ShellChangeNotification {
-    if (-not ('MdViewer.NativeMethods' -as [type])) {
-        Add-Type -Namespace MdViewer -Name NativeMethods -MemberDefinition @'
+    if (-not ('Hirake.NativeMethods' -as [type])) {
+        Add-Type -Namespace Hirake -Name NativeMethods -MemberDefinition @'
 [System.Runtime.InteropServices.DllImport("shell32.dll")]
 public static extern void SHChangeNotify(long wEventId, uint uFlags, IntPtr dwItem1, IntPtr dwItem2);
 '@
     }
     $SHCNE_ASSOCCHANGED = 0x08000000
     $SHCNF_IDLIST = 0x0000
-    [MdViewer.NativeMethods]::SHChangeNotify($SHCNE_ASSOCCHANGED, $SHCNF_IDLIST, [IntPtr]::Zero, [IntPtr]::Zero)
+    [Hirake.NativeMethods]::SHChangeNotify($SHCNE_ASSOCCHANGED, $SHCNF_IDLIST, [IntPtr]::Zero, [IntPtr]::Zero)
 }
 
-$progId = 'MdViewer.md'
+$progId = 'Hirake.md'
 $progIdKey = "HKCU:\Software\Classes\$progId"
 
-# 1. .md の既定プログラムが MdViewer.md の場合のみ削除（他アプリの関連付けを壊さない）
+# 1. .md の既定プログラムが Hirake.md の場合のみ削除（他アプリの関連付けを壊さない）
 $mdExtKey = 'HKCU:\Software\Classes\.md'
 if (Test-Path -LiteralPath $mdExtKey) {
     $existingDefault = $null
@@ -40,11 +40,11 @@ if (Test-Path -LiteralPath $mdExtKey) {
         Remove-ItemProperty -Path $mdExtKey -Name '(default)' -ErrorAction SilentlyContinue
         Write-Host "'.md' の既定プログラム設定（'$progId'）を削除しました。"
     } elseif ($existingDefault) {
-        Write-Host "'.md' の既定プログラムは '$existingDefault' のままです（MdViewer が設定したものではないため削除しません）。"
+        Write-Host "'.md' の既定プログラムは '$existingDefault' のままです（Hirake が設定したものではないため削除しません）。"
     }
 }
 
-# 2. .md / .markdown の OpenWithProgIds から MdViewer.md を削除
+# 2. .md / .markdown の OpenWithProgIds から Hirake.md を削除
 foreach ($ext in @('.md', '.markdown')) {
     $openWithKey = "HKCU:\Software\Classes\$ext\OpenWithProgIds"
     if (Test-Path -LiteralPath $openWithKey) {
@@ -69,5 +69,5 @@ Send-ShellChangeNotification
 
 Write-Host ''
 Write-Host '===================================================================='
-Write-Host 'MdViewer の関連付け解除が完了しました。'
+Write-Host 'Hirake の関連付け解除が完了しました。'
 Write-Host '===================================================================='

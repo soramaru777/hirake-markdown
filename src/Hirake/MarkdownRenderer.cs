@@ -6,20 +6,20 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Markdig;
 
-namespace MdViewer;
+namespace Hirake;
 
 /// <summary>
 /// Markdown ファイルを読み込み、Assets/template.html と合成した完全な HTML を生成する。
-/// 画像・リンクの絶対パスは仮想ホスト &lt;ドライブ小文字&gt;.doc.mdviewer 形式へ書き換える。
+/// 画像・リンクの絶対パスは仮想ホスト &lt;ドライブ小文字&gt;.doc.hirake 形式へ書き換える。
 /// </summary>
 public static class MarkdownRenderer
 {
     /// <summary>
     /// 仮想ホストのドメインサフィックス。実際のホストはドライブごとに
-    /// &lt;ドライブ小文字&gt;.doc.mdviewer（例: c.doc.mdviewer）となる。
+    /// &lt;ドライブ小文字&gt;.doc.hirake（例: c.doc.hirake）となる。
     /// C# 側がドライブごとに仮想ホストをマッピングする。
     /// </summary>
-    public const string DocHost = "doc.mdviewer";
+    public const string DocHost = "doc.hirake";
 
     private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
         .UseAdvancedExtensions()
@@ -128,15 +128,15 @@ public static class MarkdownRenderer
     }
 
     /// <summary>
-    /// ドライブ文字（小文字）から仮想ホスト名を組み立てる（例: 'C' → "c.doc.mdviewer"）。
+    /// ドライブ文字（小文字）から仮想ホスト名を組み立てる（例: 'C' → "c.doc.hirake"）。
     /// ホスト命名規則の唯一の真実源。DocumentTab 側もこれを参照する。
     /// </summary>
     public static string BuildDocHost(char driveLetter)
         => $"{char.ToLowerInvariant(driveLetter)}.{DocHost}";
 
     /// <summary>
-    /// 仮想ホスト名 "&lt;letter&gt;.doc.mdviewer" からドライブ文字（大文字）を取り出す。
-    /// サブドメイン無しの旧 "doc.mdviewer" は該当しない（false を返す）。
+    /// 仮想ホスト名 "&lt;letter&gt;.doc.hirake" からドライブ文字（大文字）を取り出す。
+    /// サブドメイン無しの旧 "doc.hirake" は該当しない（false を返す）。
     /// </summary>
     public static bool TryGetDriveFromDocHost(string host, out char drive)
     {
@@ -161,7 +161,7 @@ public static class MarkdownRenderer
 
     /// <summary>
     /// {{BASE}} 用: ドライブルートからファイルのフォルダまでの相対パスを
-    /// https://&lt;ドライブ小文字&gt;.doc.mdviewer/ 形式の URL に変換する
+    /// https://&lt;ドライブ小文字&gt;.doc.hirake/ 形式の URL に変換する
     /// （各セグメントを URL エスケープ）。
     /// </summary>
     private static string BuildBaseUrl(string filePath)
@@ -198,7 +198,7 @@ public static class MarkdownRenderer
 
     /// <summary>
     /// 変換後 HTML の src / href に含まれる Windows 絶対パス（C:\... や file:///C:/...）を
-    /// https://&lt;ドライブ小文字&gt;.doc.mdviewer/... 形式に書き換える。
+    /// https://&lt;ドライブ小文字&gt;.doc.hirake/... 形式に書き換える。
     /// </summary>
     private static string RewriteAbsolutePaths(string html, string filePath)
     {

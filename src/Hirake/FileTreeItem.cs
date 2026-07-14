@@ -3,7 +3,7 @@ using System.ComponentModel;
 using System.IO;
 using System.Runtime.CompilerServices;
 
-namespace MdViewer;
+namespace Hirake;
 
 /// <summary>
 /// ファイルツリーサイドバーの 1 ノード（フォルダ or Markdown ファイル）。

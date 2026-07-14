@@ -6,8 +6,8 @@
     <UseWPF>true</UseWPF>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <AssemblyName>MdViewer</AssemblyName>
-    <RootNamespace>MdViewer</RootNamespace>
+    <AssemblyName>Hirake</AssemblyName>
+    <RootNamespace>Hirake</RootNamespace>
     <ApplicationIcon>app.ico</ApplicationIcon>
   </PropertyGroup>
 
