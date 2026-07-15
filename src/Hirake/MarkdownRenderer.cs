@@ -24,7 +24,8 @@ public static class MarkdownRenderer
     /// </summary>
     public const string DocHost = "doc.hirake";
 
-    private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
+    // LinkGraphService（依存グラフ基盤）と共有するため internal。
+    internal static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
         .UseAdvancedExtensions()
         .UseYamlFrontMatter()
         .Build();
@@ -117,7 +118,7 @@ public static class MarkdownRenderer
                "</head><body><div>" + encoded + "</div></body></html>";
     }
 
-    private static string ReadFileText(string filePath)
+    internal static string ReadFileText(string filePath)
     {
         byte[] bytes = File.ReadAllBytes(filePath);
 

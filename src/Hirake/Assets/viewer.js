@@ -21,6 +21,7 @@
  *     { type:'shortcut', action:'toggleSidebar' }    Ctrl+B
  *     { type:'shortcut', action:'exportPdf' }        Ctrl+Shift+E
  *     { type:'shortcut', action:'cycleTheme' }       Ctrl+Shift+D
+ *     { type:'shortcut', action:'toggleGraphView' }  Ctrl+G
  *   ホスト→WebView 公開関数:
  *     window.__mdvSetTheme('light'|'dark')  テーマ切替（スクロールは動かさない）
  *     window.__mdvRestoreScroll(y)          スクロール位置の復元（Mermaid 描画後にも再適用）
@@ -974,6 +975,12 @@
     if (!event.shiftKey && key === 'o') {
       event.preventDefault();
       postToHost({ type: 'shortcut', action: 'openFile' });
+      return;
+    }
+
+    if (!event.shiftKey && key === 'g') {
+      event.preventDefault();
+      postToHost({ type: 'shortcut', action: 'toggleGraphView' });
       return;
     }
 
