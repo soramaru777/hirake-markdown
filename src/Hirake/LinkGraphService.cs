@@ -48,6 +48,83 @@ public sealed class LinkGraph
 
 public static class LinkGraphService
 {
+    // 直近に構築したグラフの単一エントリキャッシュ。
+    // タブ切替や自動リロードのたびにフォルダ全体を再解析しないための短 TTL。
+    private static readonly object CacheLock = new();
+    private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(10);
+    private static string? _cachedRoot;
+    private static DateTime _cachedAtUtc;
+    private static LinkGraph? _cachedGraph;
+
+    /// <summary>
+    /// 指定フォルダから上方向へ「md ファイルを直接含む親」が続く限り遡り、
+    /// ワークスペースのルートらしきフォルダを推定する（最大 5 階層）。
+    /// サブフォルダの文書を開いたときに、親フォルダ側の参照元・リンク先が
+    /// 解析範囲から漏れるのを防ぐ。グラフビューとバックリンクで共通に使う。
+    /// </summary>
+    public static string FindWorkspaceRoot(string startDirectory)
+    {
+        string current = Path.GetFullPath(startDirectory);
+        for (int i = 0; i < 5; i++)
+        {
+            DirectoryInfo? parent;
+            bool parentHasMarkdown;
+            try
+            {
+                parent = Directory.GetParent(current);
+                if (parent == null)
+                {
+                    break;
+                }
+                parentHasMarkdown = parent.EnumerateFiles()
+                    .Any(f => FileTreeItem.IsMarkdownFile(f.FullName));
+            }
+            catch (IOException)
+            {
+                break;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                break;
+            }
+
+            if (!parentHasMarkdown)
+            {
+                break;
+            }
+            current = parent.FullName;
+        }
+        return current;
+    }
+
+    /// <summary>
+    /// Build の短 TTL キャッシュ版。バックリンク表示など高頻度の呼び出しで使う。
+    /// </summary>
+    public static LinkGraph BuildCached(string rootFolder, CancellationToken token = default)
+    {
+        string root = Path.GetFullPath(rootFolder);
+
+        lock (CacheLock)
+        {
+            if (_cachedGraph != null
+                && string.Equals(_cachedRoot, root, StringComparison.OrdinalIgnoreCase)
+                && DateTime.UtcNow - _cachedAtUtc < CacheTtl)
+            {
+                return _cachedGraph;
+            }
+        }
+
+        LinkGraph graph = Build(root, token);
+
+        lock (CacheLock)
+        {
+            _cachedRoot = root;
+            _cachedGraph = graph;
+            _cachedAtUtc = DateTime.UtcNow;
+        }
+        return graph;
+    }
+
     /// <summary>
     /// フォルダ配下の md ファイルを解析して依存グラフを構築する。
     /// 列挙規則（除外フォルダ・上限）は横断検索（FolderSearchService）と共通。

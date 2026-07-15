@@ -772,6 +772,52 @@
   window.__mdvSetTheme = setTheme;
 
   /* ==========================================================
+   * バックリンク（ホスト連携）
+   *
+   * C# 側が依存グラフ基盤（LinkGraphService）の解析結果を
+   * __mdvSetBacklinks([{path, name}]) で注入する。
+   * クリックは openFile メッセージで該当文書をタブで開く。
+   * ========================================================== */
+
+  var backlinksSection = document.getElementById('backlinks-section');
+  var backlinksContent = document.getElementById('backlinks-content');
+
+  function setBacklinks(list) {
+    if (!backlinksSection || !backlinksContent) return;
+
+    backlinksContent.innerHTML = '';
+    if (!list || !list.length) {
+      backlinksSection.hidden = true;
+      return;
+    }
+
+    var ul = document.createElement('ul');
+    list.forEach(function (item) {
+      if (!item || !item.path) return;
+      var li = document.createElement('li');
+      var a = document.createElement('a');
+      a.textContent = item.name || item.path;
+      a.title = item.path;
+      a.href = 'javascript:void(0)';
+      a.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        postToHost({ type: 'openFile', path: item.path });
+      });
+      li.appendChild(a);
+      ul.appendChild(li);
+    });
+
+    backlinksContent.appendChild(ul);
+    backlinksSection.hidden = false;
+
+    // 見出しの無い文書では buildToc がトグルを隠すが、
+    // バックリンクがあるならサイドバーを開ける必要がある。
+    if (tocToggle) tocToggle.style.display = '';
+  }
+
+  window.__mdvSetBacklinks = setBacklinks;
+
+  /* ==========================================================
    * スクロール位置の通知・復元（ホスト連携）
    * ========================================================== */
 

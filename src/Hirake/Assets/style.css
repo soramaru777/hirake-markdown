@@ -197,6 +197,56 @@ body.toc-open .toc-sidebar {
   color: var(--mdv-text-muted);
 }
 
+/* ---------- バックリンク（サイドバー下部） ---------- */
+
+.backlinks-section {
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--mdv-border-muted);
+}
+
+/* サイドバー先頭の「目次」ヘッダは absolute 配置のため、こちらは通常フローで表示する */
+.backlinks-section .toc-sidebar-header {
+  position: static;
+  padding: 0 16px 6px;
+}
+
+.backlinks-content {
+  padding: 0 8px 24px;
+}
+
+.backlinks-content ul {
+  list-style: none;
+  margin: 0;
+  padding-left: 0;
+}
+
+.backlinks-content li {
+  margin: 0;
+}
+
+.backlinks-content a {
+  display: block;
+  padding: 5px 10px;
+  border-radius: 6px;
+  color: var(--mdv-text-muted);
+  text-decoration: none;
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: normal;
+  word-break: break-word;
+  cursor: pointer;
+}
+
+.backlinks-content a:focus:not(:focus-visible) {
+  outline: none;
+}
+
+.backlinks-content a:hover {
+  background: var(--mdv-border-muted);
+  color: var(--mdv-text);
+}
+
 /* ---------- 検索バー ---------- */
 
 .search-bar {
