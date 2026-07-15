@@ -113,7 +113,9 @@ public partial class MainWindow : Window, IDocumentTabHost
             return;
         }
 
-        string fullRoot = Path.GetFullPath(root);
+        // サブフォルダから開いても親フォルダ側のリンクが漏れないよう、
+        // ワークスペースルート（md を直接含む最上位フォルダ）を起点にする。
+        string fullRoot = LinkGraphService.FindWorkspaceRoot(root);
         var existing = Tabs.OfType<GraphTab>().FirstOrDefault(
             t => string.Equals(t.RootFolder, fullRoot, StringComparison.OrdinalIgnoreCase));
         if (existing != null)

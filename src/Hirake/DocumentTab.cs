@@ -569,6 +569,9 @@ public class DocumentTab : IDisposable
             return;
         }
 
+        // バックリンク一覧の注入（バックグラウンド解析。文書ファイルのタブのみ）。
+        _ = UpdateBacklinksAsync(core);
+
         // 自動リロード時の位置復元が最優先（既存挙動を維持する）。
         if (_restoreScrollRaw != null)
         {
@@ -602,6 +605,56 @@ public class DocumentTab : IDisposable
                 RestoreSavedScroll(core, saved.Value);
             }
         }
+    }
+
+    /// <summary>
+    /// 依存グラフ基盤（LinkGraphService）でバックリンクを解析し、
+    /// viewer.js の __mdvSetBacklinks へ注入する。解析はバックグラウンドスレッドで行う。
+    /// グラフタブ等、FilePath が実ファイルでないタブでは何もしない。
+    /// </summary>
+    private async Task UpdateBacklinksAsync(CoreWebView2 core)
+    {
+        if (!File.Exists(FilePath))
+        {
+            return;
+        }
+        string? directory = Path.GetDirectoryName(FilePath);
+        if (string.IsNullOrEmpty(directory))
+        {
+            return;
+        }
+
+        string json;
+        try
+        {
+            json = await Task.Run(() =>
+            {
+                // 親フォルダ側の参照元も拾えるよう、ワークスペースルートから解析する。
+                string root = LinkGraphService.FindWorkspaceRoot(directory);
+                LinkGraph graph = LinkGraphService.BuildCached(root);
+                var list = new List<object>();
+                foreach (string path in graph.GetBacklinks(FilePath))
+                {
+                    list.Add(new { path, name = Path.GetFileName(path) });
+                }
+                return JsonSerializer.Serialize(list);
+            }).ConfigureAwait(true);
+        }
+        catch
+        {
+            return; // 解析失敗時はバックリンク非表示のまま（本文表示は妨げない）
+        }
+
+        if (_disposed)
+        {
+            return;
+        }
+
+        // json は System.Text.Json の出力（< は < にエスケープ済み）なので安全に埋め込める。
+        string script =
+            "(function(){try{if(typeof window.__mdvSetBacklinks==='function'){"
+            + "window.__mdvSetBacklinks(" + json + ");}}catch(e){}})();";
+        _ = core.ExecuteScriptAsync(script);
     }
 
     /// <summary>
