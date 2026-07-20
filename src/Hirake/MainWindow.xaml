@@ -192,31 +192,73 @@
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
-                    <!-- 検索ボックス（プレースホルダをオーバーレイ表示） -->
-                    <Border Grid.Row="0"
-                            Margin="8,8,8,4"
-                            BorderThickness="1"
-                            BorderBrush="{DynamicResource ChromeBorder}"
-                            Background="{DynamicResource ChromeInputBackground}"
-                            CornerRadius="4">
-                        <Grid>
-                            <TextBox x:Name="SearchBox"
-                                     BorderThickness="0"
-                                     Background="Transparent"
-                                     Foreground="{DynamicResource ChromeText}"
-                                     CaretBrush="{DynamicResource ChromeText}"
-                                     Padding="6,5"
-                                     VerticalContentAlignment="Center"
-                                     TextChanged="SearchBox_TextChanged"
-                                     PreviewKeyDown="SearchBox_PreviewKeyDown" />
-                            <TextBlock x:Name="SearchPlaceholder"
-                                       Text="フォルダ内を検索"
-                                       IsHitTestVisible="False"
-                                       Foreground="{DynamicResource ChromeSubText}"
-                                       Padding="8,5"
-                                       VerticalAlignment="Center" />
-                        </Grid>
-                    </Border>
+                    <!-- 検索ボックス（プレースホルダをオーバーレイ表示）＋意味検索トグル -->
+                    <Grid Grid.Row="0" Margin="8,8,8,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <Border Grid.Column="0"
+                                BorderThickness="1"
+                                BorderBrush="{DynamicResource ChromeBorder}"
+                                Background="{DynamicResource ChromeInputBackground}"
+                                CornerRadius="4">
+                            <Grid>
+                                <TextBox x:Name="SearchBox"
+                                         BorderThickness="0"
+                                         Background="Transparent"
+                                         Foreground="{DynamicResource ChromeText}"
+                                         CaretBrush="{DynamicResource ChromeText}"
+                                         Padding="6,5"
+                                         VerticalContentAlignment="Center"
+                                         TextChanged="SearchBox_TextChanged"
+                                         PreviewKeyDown="SearchBox_PreviewKeyDown" />
+                                <TextBlock x:Name="SearchPlaceholder"
+                                           Text="フォルダ内を検索"
+                                           IsHitTestVisible="False"
+                                           Foreground="{DynamicResource ChromeSubText}"
+                                           Padding="8,5"
+                                           VerticalAlignment="Center" />
+                            </Grid>
+                        </Border>
+
+                        <!-- 意味（セマンティック）検索トグル。ON のときは Enter で意味検索を実行する。 -->
+                        <ToggleButton x:Name="SemanticToggle"
+                                      Grid.Column="1"
+                                      Margin="4,0,0,0"
+                                      Padding="8,0"
+                                      Cursor="Hand"
+                                      Foreground="{DynamicResource ChromeText}"
+                                      Background="{DynamicResource ChromeInputBackground}"
+                                      BorderBrush="{DynamicResource ChromeBorder}"
+                                      Click="SemanticToggle_Click"
+                                      ToolTip="意味で検索（AI によるセマンティック検索・Enter で実行）">
+                            <ToggleButton.Template>
+                                <ControlTemplate TargetType="ToggleButton">
+                                    <Border x:Name="ToggleBorder"
+                                            CornerRadius="4"
+                                            BorderThickness="1"
+                                            BorderBrush="{TemplateBinding BorderBrush}"
+                                            Background="{TemplateBinding Background}">
+                                        <ContentPresenter HorizontalAlignment="Center"
+                                                          VerticalAlignment="Center"
+                                                          Margin="{TemplateBinding Padding}" />
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsChecked" Value="True">
+                                            <Setter TargetName="ToggleBorder" Property="Background"
+                                                    Value="{DynamicResource ChromeAccent}" />
+                                            <Setter TargetName="ToggleBorder" Property="BorderBrush"
+                                                    Value="{DynamicResource ChromeAccent}" />
+                                            <Setter Property="Foreground" Value="White" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </ToggleButton.Template>
+                            <TextBlock Text="意味" FontSize="12" />
+                        </ToggleButton>
+                    </Grid>
 
                     <!-- ツリー表示（検索が空のとき） -->
                     <Grid x:Name="TreePane" Grid.Row="1">

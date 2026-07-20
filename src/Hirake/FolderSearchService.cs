@@ -20,6 +20,11 @@ public sealed class SearchFileResult
     public List<SearchHit> Hits { get; init; } = new();
     public int TotalHits { get; init; }
 
+    /// <summary>
+    /// 意味検索でのファイル最高チャンク類似度（0〜1）。キーワード検索では未使用（既定 0）。
+    /// </summary>
+    public float Score { get; init; }
+
     /// <summary>ヒット総数表示（例: "3 件" / "12 件"）。</summary>
     public string HitCountLabel => $"{TotalHits} 件";
 }

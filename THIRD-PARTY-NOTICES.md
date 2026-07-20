@@ -9,6 +9,9 @@ Hirake は以下のサードパーティソフトウェアを利用・同梱し�
 - [KaTeX](#katex) — MIT
 - [D3.js](#d3js) — ISC
 - [Microsoft.Web.WebView2](#microsoftwebwebview2) — Microsoft Software License Terms
+- [Microsoft.ML.OnnxRuntime](#microsoftmlonnxruntime) — MIT
+- [Microsoft.ML.Tokenizers](#microsoftmltokenizers) — MIT
+- [multilingual-e5-small モデル](#multilingual-e5-small-モデル) — MIT
 
 ---
 
@@ -167,3 +170,95 @@ SOFTWARE.
 WebView2 SDK は NuGet パッケージとして参照しており、本リポジトリにはバイナリを含みません。
 ライセンス条件は Microsoft Software License Terms に従います:
 <https://www.nuget.org/packages/Microsoft.Web.WebView2/license>
+
+## Microsoft.ML.OnnxRuntime
+
+<https://github.com/microsoft/onnxruntime>
+（NuGet パッケージとして利用。意味検索の埋め込み推論に使用。MIT License）
+
+```
+MIT License
+
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## Microsoft.ML.Tokenizers
+
+<https://github.com/dotnet/machinelearning>
+（NuGet パッケージとして利用。SentencePiece トークナイズに使用。MIT License）
+
+```
+MIT License
+
+Copyright (c) .NET Foundation and Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+## multilingual-e5-small モデル
+
+<https://huggingface.co/intfloat/multilingual-e5-small>
+（ONNX 変換版: <https://huggingface.co/Xenova/multilingual-e5-small>）
+
+意味検索の埋め込みモデル。リポジトリにはバイナリを同梱せず、初回検索時に
+`%LocalAppData%\Hirake\models\multilingual-e5-small\` へ自動ダウンロードします。
+オリジナルモデル（intfloat）および ONNX 変換（Xenova）ともに MIT License。
+
+```
+MIT License
+
+Copyright (c) 2023 intfloat
+Copyright (c) 2023 Xenova (ONNX 変換)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
