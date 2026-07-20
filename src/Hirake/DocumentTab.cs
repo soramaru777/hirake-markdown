@@ -665,6 +665,42 @@ public class DocumentTab : IDisposable
     }
 
     /// <summary>
+    /// 意味索引が準備済みのルートを、文書のフォルダからワークスペースルートへ向かって探す。
+    /// 意味検索の索引は「検索時のアクティブタブのフォルダ」単位で作られるため、
+    /// どの階層で索引が作られていても拾えるよう、候補を昇順に集めて広い方から採用する。
+    /// 見つからなければ null（レコメンドは何もしない）。
+    /// </summary>
+    private static string? FindReadyIndexRoot(string directory)
+    {
+        string workspaceRoot = LinkGraphService.FindWorkspaceRoot(directory);
+
+        var candidates = new List<string>();
+        string current = Path.GetFullPath(directory);
+        candidates.Add(current);
+        while (!string.Equals(current, workspaceRoot, StringComparison.OrdinalIgnoreCase)
+               && candidates.Count < 8)
+        {
+            string? parent = Path.GetDirectoryName(current);
+            if (string.IsNullOrEmpty(parent))
+            {
+                break;
+            }
+            current = parent;
+            candidates.Add(current);
+        }
+
+        // 広いスコープ（ワークスペースルート側）を優先して採用する。
+        for (int i = candidates.Count - 1; i >= 0; i--)
+        {
+            if (SemanticIndexService.IsReadyForRecommendations(candidates[i]))
+            {
+                return candidates[i];
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
     /// 意味索引基盤（SemanticIndexService）で表示中文書と似た文書を解析し、
     /// viewer.js の __mdvSetRecommendations へ「次に読む」として注入する。
     /// モデル・索引が未準備なら副作用なく何もしない（ダウンロード・索引構築をしない）。
@@ -693,11 +729,11 @@ public class DocumentTab : IDisposable
         string json;
         try
         {
-            // 索引スコープはバックリンクと同じワークスペースルートに揃える。
-            string root = LinkGraphService.FindWorkspaceRoot(directory);
-
-            // モデル・索引が未準備なら一切の副作用なく終了する（本機能の最重要仕様）。
-            if (!SemanticIndexService.IsReadyForRecommendations(root))
+            // 意味索引は「アクティブタブのフォルダ」単位で作られる（横断検索と同じ規則）ため、
+            // 文書のフォルダからワークスペースルートまでを順に調べ、索引が準備済みの
+            // 最も広いスコープを採用する。どこにも無ければ副作用なく終了する（最重要仕様）。
+            string? root = FindReadyIndexRoot(directory);
+            if (root == null)
             {
                 return;
             }
