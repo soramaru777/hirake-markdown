@@ -65,6 +65,10 @@ public class DocumentTab : IDisposable
     private bool _suppressZoomNotify;
     private bool _disposed;
 
+    // レコメンド解析の世代管理。新しいナビゲーションが始まったら前の解析をキャンセルし、
+    // 古い結果が新しいページへ注入されるのを防ぐ（UI スレッドからのみ触る）。
+    private CancellationTokenSource? _recommendCts;
+
     public WebView2 WebView { get; }
     public string FilePath { get; }
     public string FileName { get; protected set; }
@@ -572,6 +576,9 @@ public class DocumentTab : IDisposable
         // バックリンク一覧の注入（バックグラウンド解析。文書ファイルのタブのみ）。
         _ = UpdateBacklinksAsync(core);
 
+        // 関連文書「次に読む」の注入（意味索引が準備済みのときだけ。副作用ゼロ）。
+        _ = UpdateRecommendationsAsync(core);
+
         // 自動リロード時の位置復元が最優先（既存挙動を維持する）。
         if (_restoreScrollRaw != null)
         {
@@ -654,6 +661,110 @@ public class DocumentTab : IDisposable
         string script =
             "(function(){try{if(typeof window.__mdvSetBacklinks==='function'){"
             + "window.__mdvSetBacklinks(" + json + ");}}catch(e){}})();";
+        _ = core.ExecuteScriptAsync(script);
+    }
+
+    /// <summary>
+    /// 意味索引が準備済みのルートを、文書のフォルダからワークスペースルートへ向かって探す。
+    /// 意味検索の索引は「検索時のアクティブタブのフォルダ」単位で作られるため、
+    /// どの階層で索引が作られていても拾えるよう、候補を昇順に集めて広い方から採用する。
+    /// 見つからなければ null（レコメンドは何もしない）。
+    /// </summary>
+    private static string? FindReadyIndexRoot(string directory)
+    {
+        string workspaceRoot = LinkGraphService.FindWorkspaceRoot(directory);
+
+        var candidates = new List<string>();
+        string current = Path.GetFullPath(directory);
+        candidates.Add(current);
+        while (!string.Equals(current, workspaceRoot, StringComparison.OrdinalIgnoreCase)
+               && candidates.Count < 8)
+        {
+            string? parent = Path.GetDirectoryName(current);
+            if (string.IsNullOrEmpty(parent))
+            {
+                break;
+            }
+            current = parent;
+            candidates.Add(current);
+        }
+
+        // 広いスコープ（ワークスペースルート側）を優先して採用する。
+        for (int i = candidates.Count - 1; i >= 0; i--)
+        {
+            if (SemanticIndexService.IsReadyForRecommendations(candidates[i]))
+            {
+                return candidates[i];
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// 意味索引基盤（SemanticIndexService）で表示中文書と似た文書を解析し、
+    /// viewer.js の __mdvSetRecommendations へ「次に読む」として注入する。
+    /// モデル・索引が未準備なら副作用なく何もしない（ダウンロード・索引構築をしない）。
+    /// バックリンクと同様、FilePath が実ファイルでないタブ（グラフタブ等）では何もしない。
+    /// </summary>
+    private async Task UpdateRecommendationsAsync(CoreWebView2 core)
+    {
+        // 進行中の解析（前回ナビゲーション分）のキャンセルと世代確立は、早期リターンより
+        // 前に必ず行う。後に置くと、対象外ナビゲーション（ファイル消失等）で新しい世代が
+        // 立たず、前世代の結果が現在のページへ注入されてしまう。
+        // 本メソッドは UI スレッドからのみ呼ばれるため、フィールドの入れ替えに競合はない。
+        _recommendCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _recommendCts = cts;
+
+        if (!File.Exists(FilePath))
+        {
+            return;
+        }
+        string? directory = Path.GetDirectoryName(FilePath);
+        if (string.IsNullOrEmpty(directory))
+        {
+            return;
+        }
+
+        string json;
+        try
+        {
+            // 意味索引は「アクティブタブのフォルダ」単位で作られる（横断検索と同じ規則）ため、
+            // 文書のフォルダからワークスペースルートまでを順に調べ、索引が準備済みの
+            // 最も広いスコープを採用する。どこにも無ければ副作用なく終了する（最重要仕様）。
+            string? root = FindReadyIndexRoot(directory);
+            if (root == null)
+            {
+                return;
+            }
+
+            List<(string Path, string Name, float Score)> recommendations =
+                await SemanticIndexService
+                    .GetRecommendationsAsync(root, FilePath, 5, cts.Token)
+                    .ConfigureAwait(true);
+
+            var list = new List<object>(recommendations.Count);
+            foreach ((string path, string name, float score) in recommendations)
+            {
+                list.Add(new { path, name, score });
+            }
+            json = JsonSerializer.Serialize(list);
+        }
+        catch
+        {
+            return; // キャンセル・解析失敗時は「次に読む」非表示のまま（本文表示は妨げない）
+        }
+
+        // 破棄済み・世代交代済み（新しいナビゲーションが開始済み）なら注入しない。
+        if (_disposed || cts.IsCancellationRequested || !ReferenceEquals(_recommendCts, cts))
+        {
+            return;
+        }
+
+        // json は System.Text.Json の出力（< は < にエスケープ済み）なので安全に埋め込める。
+        string script =
+            "(function(){try{if(typeof window.__mdvSetRecommendations==='function'){"
+            + "window.__mdvSetRecommendations(" + json + ");}}catch(e){}})();";
         _ = core.ExecuteScriptAsync(script);
     }
 
@@ -867,6 +978,16 @@ public class DocumentTab : IDisposable
             return;
         }
         _disposed = true;
+
+        // 進行中のレコメンド解析を止める（結果はもう注入されない）。
+        try
+        {
+            _recommendCts?.Cancel();
+        }
+        catch
+        {
+            // ignore
+        }
 
         try
         {

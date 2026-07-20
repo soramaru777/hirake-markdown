@@ -27,6 +27,8 @@
  *     window.__mdvSetTheme('light'|'dark')  テーマ切替（スクロールは動かさない）
  *     window.__mdvRestoreScroll(y)          スクロール位置の復元（Mermaid 描画後にも再適用）
  *     window.__mdvPrint()                   印刷（UI 退避つき）
+ *     window.__mdvSetBacklinks([{path,name}])         このページを参照する文書一覧
+ *     window.__mdvSetRecommendations([{path,name,score}])  次に読む（関連文書レコメンド）
  *
  * 注意:
  *   - vendor（hljs / mermaid / KaTeX）が読み込めていなくても全体が死なないよう、
@@ -867,6 +869,64 @@
   }
 
   window.__mdvSetBacklinks = setBacklinks;
+
+  /* ==========================================================
+   * 次に読む（関連文書レコメンド。ホスト連携）
+   *
+   * C# 側が意味索引基盤（SemanticIndexService）で求めた類似文書を
+   * __mdvSetRecommendations([{path, name, score}]) で注入する。
+   * 0件・未提供時はセクションごと非表示。クリックはバックリンクと同じく
+   * openFile メッセージで該当文書をタブで開く。
+   * ========================================================== */
+
+  var recommendSection = document.getElementById('recommend-section');
+  var recommendContent = document.getElementById('recommend-content');
+
+  function setRecommendations(list) {
+    if (!recommendSection || !recommendContent) return;
+
+    recommendContent.innerHTML = '';
+    if (!list || !list.length) {
+      recommendSection.hidden = true;
+      return;
+    }
+
+    var ul = document.createElement('ul');
+    list.forEach(function (item) {
+      if (!item || !item.path) return;
+      var li = document.createElement('li');
+      var a = document.createElement('a');
+      a.title = item.path;
+      a.href = 'javascript:void(0)';
+
+      var nameSpan = document.createElement('span');
+      nameSpan.className = 'recommend-name';
+      nameSpan.textContent = item.name || item.path;
+      a.appendChild(nameSpan);
+
+      if (typeof item.score === 'number' && isFinite(item.score)) {
+        var scoreSpan = document.createElement('span');
+        scoreSpan.className = 'recommend-score';
+        scoreSpan.textContent = '類似度 ' + item.score.toFixed(2);
+        a.appendChild(scoreSpan);
+      }
+
+      a.addEventListener('click', function (ev) {
+        ev.preventDefault();
+        postToHost({ type: 'openFile', path: item.path });
+      });
+      li.appendChild(a);
+      ul.appendChild(li);
+    });
+
+    recommendContent.appendChild(ul);
+    recommendSection.hidden = false;
+
+    // 見出しの無い文書でもレコメンドがあればサイドバーを開けるようにする。
+    if (tocToggle) tocToggle.style.display = '';
+  }
+
+  window.__mdvSetRecommendations = setRecommendations;
 
   /* ==========================================================
    * スクロール位置の通知・復元（ホスト連携）
