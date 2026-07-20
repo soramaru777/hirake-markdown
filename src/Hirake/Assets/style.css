@@ -247,6 +247,20 @@ body.toc-open .toc-sidebar {
   color: var(--mdv-text);
 }
 
+/* ---------- 次に読む（関連文書レコメンド。バックリンクのスタイルを踏襲） ---------- */
+
+.recommend-content .recommend-name {
+  display: block;
+}
+
+/* ファイル名の下に小さく類似度を添える */
+.recommend-content .recommend-score {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  opacity: 0.75;
+}
+
 /* ---------- 検索バー ---------- */
 
 .search-bar {

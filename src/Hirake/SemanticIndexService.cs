@@ -194,6 +194,184 @@ public static class SemanticIndexService
         }
     }
 
+    // ================================================================
+    //  レコメンド API（関連文書「次に読む」）
+    // ================================================================
+
+    /// <summary>
+    /// レコメンド機能を副作用なしで実行できる状態かを判定する。
+    /// モデル必須ファイルがすべてローカルに存在し、かつ該当ルートの索引キャッシュ
+    /// （IndexFilePath(root)）が既に存在する場合のみ true を返す。
+    /// この判定は一切のダウンロード・索引構築を行わない（存在確認のみ）。
+    /// </summary>
+    public static bool IsReadyForRecommendations(string rootFolder)
+    {
+        if (string.IsNullOrEmpty(rootFolder))
+        {
+            return false;
+        }
+        try
+        {
+            foreach (ModelFile file in RequiredFiles)
+            {
+                if (!File.Exists(Path.Combine(ModelDirectory, file.FileName)))
+                {
+                    return false;
+                }
+            }
+            // 索引スコープの正規化は BuildOrUpdateIndex / SaveIndex と揃える（Path.GetFullPath）。
+            string root = Path.GetFullPath(rootFolder);
+            return File.Exists(IndexFilePath(root));
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 表示中文書と意味的に似た文書を、既存の意味索引ベクトルを流用して上位 topN 件返す。
+    /// モデル・索引が未準備（IsReadyForRecommendations が false）のときは
+    /// 一切の副作用なく空リストを返す（ダウンロードも索引構築もしない）。
+    ///
+    /// 準備済みなら既存の差分更新（BuildOrUpdateIndex）でベクトルを用意し、
+    /// ファイル単位ベクトル（全チャンクベクトルの平均を L2 正規化）同士のコサイン類似度で
+    /// 表示中文書に近い文書を選ぶ。自分自身（パス大文字小文字無視で一致）と、
+    /// サニティフロア MinScore 未満は除外する。表示中文書が索引に無い（チャンク0件等）場合は空。
+    /// 例外は握って空リストを返す（SearchAsync と同方針）。OperationCanceledException は伝播する。
+    /// </summary>
+    public static async Task<List<(string Path, string Name, float Score)>> GetRecommendationsAsync(
+        string rootFolder, string filePath, int topN, CancellationToken ct)
+    {
+        var empty = new List<(string Path, string Name, float Score)>();
+
+        // 未準備なら副作用ゼロで即終了（ここが本機能の最重要仕様）。
+        if (topN <= 0 || string.IsNullOrEmpty(filePath) || !IsReadyForRecommendations(rootFolder))
+        {
+            return empty;
+        }
+
+        try
+        {
+            // 直近に更新済みのメモリ索引があれば再走査せず使い回す（タブ切替・
+            // 連続ナビゲーションのたびに全フォルダの差分走査が走るのを防ぐ）。
+            List<(string Path, string Heading, int Line, float[] Vec)>? chunks =
+                TryGetFreshMemoryChunks(rootFolder);
+
+            // 無ければ既存索引の差分更新のみを実行する（既存索引が読めない場合は
+            // requireExistingIndex により何も構築・保存されず空が返る = 副作用ゼロ）。
+            chunks ??= await Task.Run(
+                    () => BuildOrUpdateIndex(rootFolder, null, ct, requireExistingIndex: true), ct)
+                .ConfigureAwait(false);
+
+            if (chunks.Count == 0)
+            {
+                return empty;
+            }
+
+            // ファイル単位ベクトル = そのファイルの全チャンクベクトルの平均 → L2 正規化。
+            // チャンク0件のファイルはそもそも chunks に現れないため自然に対象外になる。
+            var fileVectors = new Dictionary<string, float[]>(StringComparer.OrdinalIgnoreCase);
+            foreach ((string path, _, _, float[] vec) in chunks)
+            {
+                if (!fileVectors.TryGetValue(path, out float[]? acc))
+                {
+                    acc = new float[EmbeddingDim];
+                    fileVectors[path] = acc;
+                }
+                int len = Math.Min(EmbeddingDim, vec.Length);
+                for (int d = 0; d < len; d++)
+                {
+                    acc[d] += vec[d];
+                }
+            }
+            ct.ThrowIfCancellationRequested();
+            foreach (float[] acc in fileVectors.Values)
+            {
+                Normalize(acc);
+            }
+
+            // 表示中文書のファイルベクトル（索引に無ければ空）。
+            string target = Path.GetFullPath(filePath);
+            if (!fileVectors.TryGetValue(target, out float[]? targetVec))
+            {
+                return empty;
+            }
+
+            var scored = new List<(string Path, float Score)>(fileVectors.Count);
+            foreach (KeyValuePair<string, float[]> kv in fileVectors)
+            {
+                // 自分自身はスコア計算前に除外する。
+                if (string.Equals(kv.Key, target, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                float score = Dot(targetVec, kv.Value);
+                if (float.IsFinite(score) && score >= MinScore)
+                {
+                    scored.Add((kv.Key, score));
+                }
+            }
+
+            return scored
+                .OrderByDescending(s => s.Score)
+                .Take(topN)
+                .Select(s => (s.Path, Path.GetFileName(s.Path), s.Score))
+                .ToList();
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            return empty;
+        }
+    }
+
+    // メモリ索引を「新鮮」とみなす期間。この間はレコメンドが差分走査を省略する。
+    private const long MemoryIndexFreshMs = 60_000;
+
+    /// <summary>
+    /// 直近（MemoryIndexFreshMs 以内）に更新されたメモリ索引が同一ルートに対して
+    /// 存在すれば、その全チャンクの平坦リストを返す。無ければ null。
+    /// ディスク・ネットワークへのアクセスは行わない。
+    /// </summary>
+    private static List<(string Path, string Heading, int Line, float[] Vec)>? TryGetFreshMemoryChunks(
+        string rootFolder)
+    {
+        string root = Path.GetFullPath(rootFolder);
+
+        // ディスク索引が（構築後に）削除されていたら短絡しない。
+        // 内容の破損まではここでは検証しない: この索引は直前（60秒以内）に自プロセスが
+        // 書いたものであり、その間の外部破損は脅威モデル外。読み取り専用経路のため
+        // 副作用（再構築・上書き）も発生しない。
+        if (!File.Exists(IndexFilePath(root)))
+        {
+            return null;
+        }
+
+        lock (MemoryLock)
+        {
+            if (_memoryIndex == null
+                || !string.Equals(_memoryRoot, root, StringComparison.OrdinalIgnoreCase)
+                || Environment.TickCount64 - _memoryIndexBuiltAtTick > MemoryIndexFreshMs)
+            {
+                return null;
+            }
+
+            var flat = new List<(string, string, int, float[])>();
+            foreach (FileEntry entry in _memoryIndex.Values)
+            {
+                foreach (ChunkEntry chunk in entry.Chunks)
+                {
+                    flat.Add((entry.Path, chunk.Heading, chunk.Line, chunk.Vec));
+                }
+            }
+            return flat;
+        }
+    }
+
     /// <summary>上位チャンクをファイル単位にまとめ、最高チャンクスコア順で SearchFileResult に整形する。</summary>
     private static List<SearchFileResult> GroupByFile(
         string rootFolder,
@@ -1072,16 +1250,58 @@ public static class SemanticIndexService
         public List<FileEntry> Files { get; set; } = new();
     }
 
+    // 索引の構築・更新（読込→差分埋め込み→保存）全体を直列化するゲート。
+    // 原子的置換だけでは並行実行の lost update（遅く完了した古いスナップショットが
+    // 新しい索引を上書きする）を防げないため、プロセス内で 1 本に絞る。
+    private static readonly SemaphoreSlim IndexBuildGate = new(1, 1);
+
+    // BuildOrUpdateIndex が最後に完了した時刻（Environment.TickCount64）。
+    // レコメンドなど頻度の高い呼び出し元が、直近に更新済みの索引を再走査なしで
+    // 使い回すための鮮度判定に用いる。
+    private static long _memoryIndexBuiltAtTick;
+
     /// <summary>
     /// ルートフォルダの索引を構築・更新し、全チャンクの平坦なリスト（パス・見出し・行・ベクトル）を返す。
     /// mtime/length が一致するファイルは既存ベクトルを再利用し、変化したファイルのみ再埋め込みする。
-    /// 消えたファイルは索引から除去する。
+    /// 消えたファイルは索引から除去する。実行はプロセス内で直列化される。
+    /// <paramref name="requireExistingIndex"/> が true のときは、既存索引が読み取れなかった場合
+    /// （削除・破損・旧バージョン）に何も構築・保存せず空を返す（レコメンドの副作用ゼロ保証用）。
     /// </summary>
     private static List<(string Path, string Heading, int Line, float[] Vec)> BuildOrUpdateIndex(
-        string rootFolder, IProgress<string>? progress, CancellationToken ct)
+        string rootFolder, IProgress<string>? progress, CancellationToken ct,
+        bool requireExistingIndex = false)
+    {
+        IndexBuildGate.Wait(ct);
+        try
+        {
+            return BuildOrUpdateIndexCore(rootFolder, progress, ct, requireExistingIndex);
+        }
+        finally
+        {
+            IndexBuildGate.Release();
+        }
+    }
+
+    private static List<(string Path, string Heading, int Line, float[] Vec)> BuildOrUpdateIndexCore(
+        string rootFolder, IProgress<string>? progress, CancellationToken ct,
+        bool requireExistingIndex)
     {
         string root = Path.GetFullPath(rootFolder);
-        Dictionary<string, FileEntry> previous = LoadIndex(root);
+
+        // レコメンド経路（requireExistingIndex）ではメモリキャッシュを使わず、
+        // 必ずディスク上の索引を読み直して検証する。メモリ経由だと、構築後に
+        // ディスク索引が削除・破損した場合に検証を迂回してしまうため。
+        Dictionary<string, FileEntry> previous = LoadIndex(root, bypassMemory: requireExistingIndex);
+
+        // レコメンド経路では「既存索引の差分更新」だけを許可する。
+        // 索引が消えた・壊れていた・旧バージョンだった場合 previous は空になるが、
+        // そのまま進むと閲覧しただけで全再構築（重い副作用）が起きてしまうため打ち切る。
+        // （md が 1 つも無いフォルダの正常な空索引も空になるが、その場合も
+        //   レコメンドすべき文書が存在しないため、打ち切りで結果は変わらない。）
+        if (requireExistingIndex && previous.Count == 0)
+        {
+            return new List<(string, string, int, float[])>();
+        }
 
         // 現在のファイル一覧（列挙規則は横断検索と共通）。
         var files = new List<string>();
@@ -1144,6 +1364,7 @@ public static class SemanticIndexService
         {
             _memoryRoot = root;
             _memoryIndex = current;
+            _memoryIndexBuiltAtTick = Environment.TickCount64;
         }
 
         // 平坦化して返す。
@@ -1251,15 +1472,22 @@ public static class SemanticIndexService
         return true;
     }
 
-    /// <summary>ルートの索引を（メモリ内キャッシュ優先で）読み込み、path→FileEntry の辞書にする。</summary>
-    private static Dictionary<string, FileEntry> LoadIndex(string root)
+    /// <summary>
+    /// ルートの索引を（メモリ内キャッシュ優先で）読み込み、path→FileEntry の辞書にする。
+    /// <paramref name="bypassMemory"/> が true のときはメモリキャッシュを使わず、
+    /// 必ずディスク上の索引ファイルを読み直して検証する。
+    /// </summary>
+    private static Dictionary<string, FileEntry> LoadIndex(string root, bool bypassMemory = false)
     {
-        lock (MemoryLock)
+        if (!bypassMemory)
         {
-            if (_memoryIndex != null
-                && string.Equals(_memoryRoot, root, StringComparison.OrdinalIgnoreCase))
+            lock (MemoryLock)
             {
-                return _memoryIndex;
+                if (_memoryIndex != null
+                    && string.Equals(_memoryRoot, root, StringComparison.OrdinalIgnoreCase))
+                {
+                    return _memoryIndex;
+                }
             }
         }
 
