@@ -49,6 +49,8 @@ public static class SemanticIndexService
 
     // 索引の 1 ファイルあたりチャンク数上限（巨大ファイルでの過剰な推論コストを抑える）。
     private const int MaxChunksPerFile = 128;
+    // 1 文書あたり OCR 対象にする画像参照の上限（超過分は無視）。
+    private const int MaxImagesPerFile = 50;
     // 検索時に採用するチャンク上位件数。
     private const int TopChunks = 30;
     // 明らかな無関係・破損由来のスコアを弾く下限（e5 は無関係文でも 0.7 台に寄るため、
@@ -56,7 +58,9 @@ public static class SemanticIndexService
     private const float MinScore = 0.5f;
     // 埋め込みの生成条件（ウィンドウ上限・切り詰め等）を変えたらバージョンを上げ、
     // 生成条件の異なるベクトルが同一索引内に混在しないようにする。
-    private const int IndexFormatVersion = 2;
+    // v3: 画像 OCR チャンクの追加でチャンク生成条件が変わったため引き上げ。
+    // v4: 本文/OCR チャンクの枠分離・未作成画像スタンプ・file URI 対応で再引き上げ。
+    private const int IndexFormatVersion = 4;
 
     private sealed record ModelFile(string FileName, string Url, long Size, string Sha256);
 
@@ -692,8 +696,11 @@ public static class SemanticIndexService
     /// Markdown を共有パイプラインで解析し、見出し（h1〜h3）単位のチャンクへ分割する。
     /// 見出しより前の本文は文書タイトル扱いのチャンク（Heading 空）にまとめる。
     /// 各チャンクの平文には e5 の "passage: " プレフィックスを付与する。
+    /// 併せて参照ローカル画像を OCR し、テキストが得られたものを画像チャンクとして追加する。
+    /// <paramref name="imageStamps"/> には OCR 対象にした画像の mtime/length を出力する
+    /// （画像差し替えの差分検出に使う）。
     /// </summary>
-    private static List<Chunk> ChunkFile(string filePath)
+    private static List<Chunk> ChunkFile(string filePath, CancellationToken ct, out List<ImageStamp> imageStamps)
     {
         string text = MarkdownRenderer.ReadFileText(filePath);
         MarkdownDocument document = Markdown.Parse(text, MarkdownRenderer.Pipeline);
@@ -736,11 +743,222 @@ public static class SemanticIndexService
         }
         Flush();
 
+        // 本文チャンクの上限適用は OCR チャンク追加より前に行う。後に回すと、
+        // 本文が上限に達した文書で OCR チャンクだけが全滅する（OCR 側は
+        // MaxImagesPerFile で独自に上限管理されるため、本文と枠を分ける）。
         if (chunks.Count > MaxChunksPerFile)
         {
             chunks.RemoveRange(MaxChunksPerFile, chunks.Count - MaxChunksPerFile);
         }
+
+        // 参照ローカル画像を OCR し、テキストが得られたものを画像チャンクとして追加する。
+        imageStamps = AppendImageOcrChunks(document, filePath, chunks, ct);
+
         return chunks;
+    }
+
+    /// <summary>
+    /// 文書が参照するローカル画像を収集して OCR し、テキストが得られたものを
+    /// 画像チャンク（見出し="画像: &lt;ファイル名&gt;"、テキスト="passage: &lt;ファイル名&gt; &lt;OCR&gt;"）
+    /// として <paramref name="chunks"/> に追加する。戻り値は OCR 対象にした画像のスタンプ一覧
+    /// （差分検出用。OCR テキストの有無に関わらず記録する）。重複パスは 1 回のみ、最大 50 画像。
+    /// </summary>
+    // 「参照時点でファイルが存在しなかった」ことを表すスタンプ値。
+    // 後から画像が置かれたケースを ImagesUnchanged で検出するために記録する。
+    private const long MissingImageStamp = -1;
+    // 「OCR が一時的に失敗した」ことを表すスタンプ値。このスタンプを含むエントリは
+    // 次回の索引更新で常に再埋め込みされ、OCR が再試行される。
+    private const long FailedOcrStamp = -2;
+
+    private static List<ImageStamp> AppendImageOcrChunks(
+        MarkdownDocument document, string filePath, List<Chunk> chunks, CancellationToken ct)
+    {
+        var stamps = new List<ImageStamp>();
+        string baseDir = Path.GetDirectoryName(Path.GetFullPath(filePath)) ?? string.Empty;
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach ((string imagePath, int line) in CollectImageReferences(document, baseDir))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (stamps.Count >= MaxImagesPerFile)
+            {
+                break;
+            }
+            if (!seen.Add(imagePath))
+            {
+                continue; // 重複パスは 1 回だけ
+            }
+
+            long mtime;
+            long length;
+            try
+            {
+                var info = new FileInfo(imagePath);
+                if (!info.Exists)
+                {
+                    // 未作成の画像も参照として記録する（後から置かれたら再索引される）。
+                    stamps.Add(new ImageStamp
+                    {
+                        Path = imagePath,
+                        MtimeUtcTicks = MissingImageStamp,
+                        Length = MissingImageStamp,
+                    });
+                    continue;
+                }
+                mtime = info.LastWriteTimeUtc.Ticks;
+                length = info.Length;
+            }
+            catch
+            {
+                continue;
+            }
+
+            stamps.Add(new ImageStamp { Path = imagePath, MtimeUtcTicks = mtime, Length = length });
+
+            string? ocr = OcrTextService.ExtractText(imagePath, ct);
+            if (ocr == null)
+            {
+                // OCR の一時的失敗。失敗スタンプに置き換え、次回検索時に再試行させる。
+                stamps[^1].MtimeUtcTicks = FailedOcrStamp;
+                continue;
+            }
+            if (string.IsNullOrWhiteSpace(ocr))
+            {
+                continue;
+            }
+
+            string fileName = Path.GetFileName(imagePath);
+            chunks.Add(new Chunk(
+                "画像: " + fileName,
+                line,
+                "passage: " + fileName + " " + ocr));
+        }
+
+        return stamps;
+    }
+
+    /// <summary>
+    /// 文書中の画像参照（LinkInline.IsImage）を解決順に列挙する。
+    /// http/https・存在しないパス・対象外拡張子はスキップし、行番号は参照を含む
+    /// 親ブロックの行（1 始まり）を用いる。
+    /// </summary>
+    private static IEnumerable<(string Path, int Line)> CollectImageReferences(
+        MarkdownDocument document, string baseDir)
+    {
+        foreach (MarkdownObject item in document.Descendants())
+        {
+            if (item is not LinkInline { IsImage: true } link)
+            {
+                continue;
+            }
+            string? resolved = ResolveLocalImageTarget(link.Url, baseDir);
+            if (resolved != null)
+            {
+                yield return (resolved, GetInlineSourceLine(link));
+            }
+        }
+    }
+
+    private static readonly string[] OcrImageExtensions =
+        { ".png", ".jpg", ".jpeg", ".bmp", ".gif" };
+
+    /// <summary>
+    /// 画像リンク URL をローカルの実ファイルパスへ解決する。対象外は null。
+    /// 相対パスはファイルのフォルダ基準。`file:///C:/...` は表示系（MarkdownRenderer）に
+    /// 合わせてローカルパスへ変換する。http(s) 等の外部 URL と UNC パス
+    /// （バックグラウンド索引からネットワークへアクセスしない方針）は対象外。
+    /// 存在チェックは行わない（未作成画像の参照記録は呼び出し側が担う）。
+    /// </summary>
+    private static string? ResolveLocalImageTarget(string? url, string baseDir)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return null;
+        }
+
+        string pathPart;
+
+        // 外部 URL（http: 等のスキーム付き）は対象外。Windows ドライブパスは除外して判定。
+        // file: URI は表示系で解決可能なため、ローカルパスに変換して受け入れる。
+        bool looksLikeDrivePath = url.Length >= 2 && char.IsLetter(url[0]) && url[1] == ':';
+        if (!looksLikeDrivePath && Uri.TryCreate(url, UriKind.Absolute, out Uri? abs))
+        {
+            if (!abs.IsFile)
+            {
+                return null;
+            }
+            try
+            {
+                pathPart = abs.LocalPath;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+        else
+        {
+            int cut = url.IndexOfAny(new[] { '#', '?' });
+            pathPart = cut >= 0 ? url[..cut] : url;
+            if (pathPart.Length == 0)
+            {
+                return null;
+            }
+            pathPart = Uri.UnescapeDataString(pathPart);
+        }
+
+        string ext = Path.GetExtension(pathPart);
+        bool supported = false;
+        foreach (string e in OcrImageExtensions)
+        {
+            if (ext.Equals(e, StringComparison.OrdinalIgnoreCase))
+            {
+                supported = true;
+                break;
+            }
+        }
+        if (!supported)
+        {
+            return null;
+        }
+
+        string full;
+        try
+        {
+            full = Path.IsPathRooted(pathPart)
+                ? Path.GetFullPath(pathPart)
+                : Path.GetFullPath(Path.Combine(baseDir, pathPart));
+        }
+        catch (ArgumentException)
+        {
+            return null; // 不正なパス文字
+        }
+
+        // UNC（ネットワーク共有）は認証・遅延・情報保存の観点から索引対象にしない。
+        if (full.StartsWith(@"\\", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        return full;
+    }
+
+    /// <summary>
+    /// インライン要素を含む親ブロックのソース行（1 始まり）を返す。
+    /// 親をたどり最上位のインラインコンテナからブロックを得る。取れなければ 1。
+    /// </summary>
+    private static int GetInlineSourceLine(Inline inline)
+    {
+        Inline node = inline;
+        while (node.Parent != null)
+        {
+            node = node.Parent;
+        }
+        if (node is ContainerInline { ParentBlock: { } block })
+        {
+            return block.Line + 1; // Markdig は 0 始まり
+        }
+        return inline.Line + 1;
     }
 
     /// <summary>
@@ -830,12 +1048,22 @@ public static class SemanticIndexService
         }
     }
 
+    /// <summary>OCR 対象にした画像 1 枚の差分検出用スタンプ。</summary>
+    private sealed class ImageStamp
+    {
+        public string Path { get; set; } = string.Empty;
+        public long MtimeUtcTicks { get; set; }
+        public long Length { get; set; }
+    }
+
     private sealed class FileEntry
     {
         public string Path { get; set; } = string.Empty;
         public long MtimeUtcTicks { get; set; }
         public long Length { get; set; }
         public List<ChunkEntry> Chunks { get; set; } = new();
+        // md 本体が無変化でも、参照画像が差し替わった場合の再埋め込み判定に使う。
+        public List<ImageStamp> ImageStamps { get; set; } = new();
     }
 
     private sealed class IndexCache
@@ -892,9 +1120,11 @@ public static class SemanticIndexService
             long length = info.Length;
 
             // 変化していないファイルは既存ベクトルを再利用する。
+            // md 本体が無変化でも、参照画像が差し替わっていれば OCR チャンクの再生成が要る。
             if (previous.TryGetValue(file, out FileEntry? cached)
                 && cached.MtimeUtcTicks == mtime
-                && cached.Length == length)
+                && cached.Length == length
+                && ImagesUnchanged(cached))
             {
                 current[file] = cached;
                 continue;
@@ -931,9 +1161,14 @@ public static class SemanticIndexService
     private static FileEntry? EmbedFile(string file, long mtime, long length, CancellationToken ct)
     {
         List<Chunk> chunks;
+        List<ImageStamp> imageStamps;
         try
         {
-            chunks = ChunkFile(file);
+            chunks = ChunkFile(file, ct, out imageStamps);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch
         {
@@ -941,12 +1176,25 @@ public static class SemanticIndexService
         }
         if (chunks.Count == 0)
         {
-            return new FileEntry { Path = file, MtimeUtcTicks = mtime, Length = length };
+            // OCR テキストが空でも、参照画像のスタンプは差分検出のため保持する。
+            return new FileEntry
+            {
+                Path = file,
+                MtimeUtcTicks = mtime,
+                Length = length,
+                ImageStamps = imageStamps,
+            };
         }
 
         float[][] vectors = EmbedTexts(chunks.Select(c => c.Text).ToList(), ct);
 
-        var entry = new FileEntry { Path = file, MtimeUtcTicks = mtime, Length = length };
+        var entry = new FileEntry
+        {
+            Path = file,
+            MtimeUtcTicks = mtime,
+            Length = length,
+            ImageStamps = imageStamps,
+        };
         for (int i = 0; i < chunks.Count; i++)
         {
             entry.Chunks.Add(new ChunkEntry
@@ -957,6 +1205,50 @@ public static class SemanticIndexService
             });
         }
         return entry;
+    }
+
+    /// <summary>
+    /// キャッシュ済みエントリの参照画像がすべて無変化（存在・mtime・length 一致）か判定する。
+    /// 1 枚でも消失・変化していれば false（画像だけ差し替えたケースの再埋め込み判定）。
+    /// </summary>
+    private static bool ImagesUnchanged(FileEntry entry)
+    {
+        foreach (ImageStamp stamp in entry.ImageStamps)
+        {
+            try
+            {
+                var info = new FileInfo(stamp.Path);
+
+                // OCR が一時失敗した画像を含むエントリは常に再埋め込み（OCR 再試行）。
+                if (stamp.MtimeUtcTicks == FailedOcrStamp)
+                {
+                    return false;
+                }
+
+                // 索引時点で未作成だった画像は「今も存在しない」場合のみ無変化
+                // （後から置かれたら再索引して OCR する）。
+                if (stamp.MtimeUtcTicks == MissingImageStamp)
+                {
+                    if (info.Exists)
+                    {
+                        return false;
+                    }
+                    continue;
+                }
+
+                if (!info.Exists
+                    || info.LastWriteTimeUtc.Ticks != stamp.MtimeUtcTicks
+                    || info.Length != stamp.Length)
+                {
+                    return false;
+                }
+            }
+            catch
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     /// <summary>ルートの索引を（メモリ内キャッシュ優先で）読み込み、path→FileEntry の辞書にする。</summary>
@@ -1038,7 +1330,8 @@ public static class SemanticIndexService
     /// </summary>
     private static bool IsValidEntry(FileEntry entry)
     {
-        if (entry.Chunks.Count > MaxChunksPerFile)
+        // 本文チャンク上限 + OCR 画像チャンク上限が正当な最大数。
+        if (entry.Chunks.Count > MaxChunksPerFile + MaxImagesPerFile)
         {
             return false;
         }
