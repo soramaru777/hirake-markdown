@@ -5,6 +5,7 @@
  *   - 目次サイドバーの生成・開閉・現在地ハイライト
  *   - ページ内検索（Ctrl+F）
  *   - シンタックスハイライト（hljs）・Mermaid 図・KaTeX 数式の描画
+ *   - 文書内 #アンカーのジャンプ制御（本文リンク / Mermaid click 記法の両方）
  *   - ライト／ダークテーマ切替（hljs CSS 切替 + Mermaid 再描画）
  *   - スクロール位置のホストへの通知（デバウンス）と復元
  *   - WPF 側へのショートカット転送
@@ -723,6 +724,56 @@
   }
 
   /* ==========================================================
+   * 文書内 #アンカーのジャンプ制御（Mermaid click 記法を含む）
+   * ========================================================== */
+
+  // article 内の <a> クリックを委譲リスナーで捕捉する。mermaid の click 記法
+  // （securityLevel: 'loose'）が SVG 内に生成する <a> も、本文の通常リンクも
+  // 同じ経路を通る。テーマ切替の再描画で SVG が作り直されても委譲なので
+  // バインドし直しは不要。
+  //
+  // 振り分け（「クリックで飛べる」文法を1つに揃える）:
+  //   - "#見出しID" → 同一文書内スクロール。<base> がフォルダ URL を指すため、
+  //     素のアンカー遷移だと doc.hirake のフォルダへページごと遷移してしまう。
+  //     ここで横取りして scrollIntoView に置き換える。
+  //   - それ以外（相対 .md / 外部 URL）→ 既定のナビゲーションに任せる。
+  //     C# 側 OnNavigationStarting が .md は新タブ、外部 URL は既定ブラウザで開く。
+  function onArticleAnchorClick(event) {
+    var el = event.target;
+    var anchor = el && el.closest ? el.closest('a') : null;
+    if (!anchor) return;
+
+    // SVG の <a> は href / xlink:href のどちらの属性でも表現されうる。
+    var href = anchor.getAttribute('href') || anchor.getAttribute('xlink:href');
+    if (!href || href.charAt(0) !== '#') return;
+
+    event.preventDefault();
+
+    var id = href.slice(1);
+    try {
+      id = decodeURIComponent(id);
+    } catch (err) {
+      // 不正なパーセントエンコードは生の文字列のまま検索する。
+    }
+    var target = id ? document.getElementById(id) : null;
+    if (!target) return;
+
+    // 目次ハイライトの挙動を目次クリック時と揃える。
+    // キーはデコード済み文字列ではなく、実際に見つかった要素の id を使う
+    // （href 側のパーセントエンコードと heading.id の表記ゆれを避ける）。
+    if (target.id && tocLinkByHeadingId[target.id]) {
+      setActiveHeading(target.id);
+    }
+    suppressScrollSyncDuringSmoothScroll();
+    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function setupAnchorJump() {
+    if (!article) return;
+    article.addEventListener('click', onArticleAnchorClick);
+  }
+
+  /* ==========================================================
    * KaTeX 数式の描画
    * ========================================================== */
 
@@ -1074,6 +1125,7 @@
     });
 
     // 4. 検索UI・ショートカット転送・スクロール通知。
+    safeRun(setupAnchorJump);
     safeRun(setupSearchInteractions);
     safeRun(setupShortcuts);
     safeRun(setupScrollReporting);
