@@ -30,6 +30,9 @@ public partial class MainWindow : Window, IDocumentTabHost
     private DispatcherTimer? _searchDebounce;
     private CancellationTokenSource? _searchCts;
 
+    // 意味（セマンティック）検索モード。ON のときは Enter 実行のみ（インクリメンタル検索は無効）。
+    private bool _semanticMode;
+
     public ObservableCollection<DocumentTab> Tabs { get; } = new();
 
     public MainWindow()
@@ -889,10 +892,31 @@ public partial class MainWindow : Window, IDocumentTabHost
             return;
         }
 
+        // 意味検索モードはインクリメンタル実行しない（Enter でのみ実行）。
+        if (_semanticMode)
+        {
+            return;
+        }
+
         // 400ms デバウンスで検索を起動する。
         _searchDebounce ??= CreateSearchDebounce();
         _searchDebounce.Stop();
         _searchDebounce.Start();
+    }
+
+    /// <summary>意味検索トグルの切替。ON/OFF で検索経路を変え、入力中の語があれば即時に再実行する。</summary>
+    private void SemanticToggle_Click(object sender, RoutedEventArgs e)
+    {
+        _semanticMode = SemanticToggle.IsChecked == true;
+        SearchPlaceholder.Text = _semanticMode ? "意味で検索（Enter）" : "フォルダ内を検索";
+
+        // モード切替は明示的な操作なので、語が入っていれば新モードで一度だけ実行する。
+        _searchDebounce?.Stop();
+        string query = SearchBox.Text?.Trim() ?? string.Empty;
+        if (query.Length > 0)
+        {
+            RunSearch(query);
+        }
     }
 
     private DispatcherTimer CreateSearchDebounce()
@@ -941,6 +965,13 @@ public partial class MainWindow : Window, IDocumentTabHost
             return;
         }
 
+        // 意味検索モードなら専用経路へ（従来のキーワード検索は挙動を変えない）。
+        if (_semanticMode)
+        {
+            await RunSemanticSearch(query, root);
+            return;
+        }
+
         // 直前の検索をキャンセルする。
         CancelSearch();
         var cts = new CancellationTokenSource();
@@ -981,6 +1012,76 @@ public partial class MainWindow : Window, IDocumentTabHost
         else
         {
             SearchSummary.Text = $"{totalHits} 件ヒット（{results.Count} ファイル）";
+            SearchEmptyLabel.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    /// <summary>
+    /// 意味（セマンティック）検索を実行する。モデル準備・索引作成の進捗は SearchSummary に表示し、
+    /// 失敗時はエラーメッセージを空状態ラベルに出す（結果クリックは既存経路をそのまま通す）。
+    /// </summary>
+    private async Task RunSemanticSearch(string query, string root)
+    {
+        CancelSearch();
+        var cts = new CancellationTokenSource();
+        _searchCts = cts;
+
+        ShowSearchPane();
+        SearchResultsList.ItemsSource = null;
+        SearchSummary.Text = "意味検索を準備中…";
+        SearchEmptyLabel.Visibility = Visibility.Collapsed;
+
+        // 進捗（ダウンロード・索引作成・検索中）を要約行へ反映する。
+        var progress = new Progress<string>(msg =>
+        {
+            if (ReferenceEquals(_searchCts, cts))
+            {
+                SearchSummary.Text = msg;
+            }
+        });
+
+        List<SearchFileResult> results;
+        string? error;
+        try
+        {
+            (results, error) = await SemanticIndexService.SearchAsync(root, query, progress, cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        catch (Exception ex)
+        {
+            results = new List<SearchFileResult>();
+            error = ex.Message;
+        }
+
+        // 実行後に別の検索へ切り替わっていたら破棄する。
+        if (cts.IsCancellationRequested || !ReferenceEquals(_searchCts, cts))
+        {
+            return;
+        }
+
+        if (error != null)
+        {
+            SearchResultsList.ItemsSource = null;
+            SearchSummary.Text = string.Empty;
+            SearchEmptyLabel.Text = error;
+            SearchEmptyLabel.Visibility = Visibility.Visible;
+            return;
+        }
+
+        SearchResultsList.ItemsSource = results;
+        if (results.Count == 0)
+        {
+            SearchSummary.Text = string.Empty;
+            SearchEmptyLabel.Text = "一致する項目がありません";
+            SearchEmptyLabel.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            // 意味検索は「一致」ではなく関連度順の候補である旨を表現に含める。
+            SearchSummary.Text = $"意味検索（関連度順）: {results.Count} ファイル";
             SearchEmptyLabel.Visibility = Visibility.Collapsed;
         }
     }
