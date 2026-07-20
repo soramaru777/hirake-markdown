@@ -74,31 +74,6 @@ $progId = 'Hirake.md'
 $progIdKey = "HKCU:\Software\Classes\$progId"
 $openCommand = "`"$resolvedExePath`" `"%1`""
 
-# 0. 旧名（MdViewer.md）で登録済みの関連付けを移行・削除
-$legacyProgId = 'MdViewer.md'
-$legacyProgIdKey = "HKCU:\Software\Classes\$legacyProgId"
-if (Test-Path $legacyProgIdKey) {
-    Remove-Item -Path $legacyProgIdKey -Recurse -Force
-    Write-Host "旧 ProgId '$legacyProgId' を削除しました。"
-}
-foreach ($ext in @('.md', '.markdown')) {
-    $extKey = "HKCU:\Software\Classes\$ext"
-    $openWithKey = "$extKey\OpenWithProgIds"
-    if (Test-Path $openWithKey) {
-        try { Remove-ItemProperty -Path $openWithKey -Name $legacyProgId -ErrorAction Stop } catch {}
-    }
-    # 既定プログラムが旧 ProgId の場合はクリアし、後続の手順 3 で新 ProgId を設定させる
-    if (Test-Path $extKey) {
-        try {
-            $current = (Get-ItemProperty -Path $extKey -Name '(default)' -ErrorAction Stop).'(default)'
-            if ($current -eq $legacyProgId) {
-                Remove-ItemProperty -Path $extKey -Name '(default)' -ErrorAction Stop
-                Write-Host "'$ext' の既定プログラム（旧 '$legacyProgId'）をクリアしました。"
-            }
-        } catch {}
-    }
-}
-
 # 1. ProgId の登録
 New-Item -Path $progIdKey -Force | Out-Null
 Set-ItemProperty -Path $progIdKey -Name '(default)' -Value 'Markdown Document'
