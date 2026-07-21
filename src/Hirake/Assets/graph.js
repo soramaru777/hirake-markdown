@@ -309,9 +309,19 @@
         postToHost({ type: 'shortcut', action: 'globalSearch' });
         return;
       }
+      if (key === 'e') {
+        event.preventDefault();
+        postToHost({ type: 'shortcut', action: 'exportPdf' });
+        return;
+      }
       if (key === 'd') {
         event.preventDefault();
         postToHost({ type: 'shortcut', action: 'cycleTheme' });
+        return;
+      }
+      if (key === 's') {
+        event.preventDefault();
+        postToHost({ type: 'shortcut', action: 'toggleStructureView' });
         return;
       }
       // 未対応の Ctrl+Shift+* はブラウザ標準に委ねる。

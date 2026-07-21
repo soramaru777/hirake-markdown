@@ -12,7 +12,8 @@ namespace Hirake;
 /// <summary>DocumentTab から MainWindow へ依頼するための最小インターフェース。</summary>
 public interface IDocumentTabHost
 {
-    void OpenFileInNewTab(string path);
+    /// <summary>ファイルを新タブで開く（既存タブがあればアクティブ化）。line 指定時は該当ソース行へスクロールする。</summary>
+    void OpenFileInNewTab(string path, int? line = null);
     void ShortcutCloseActive();
     void ShortcutNextTab();
     void ShortcutPrevTab();
@@ -23,6 +24,7 @@ public interface IDocumentTabHost
     void ShortcutExportPdf();
     void ShortcutCycleTheme();
     void ShortcutToggleGraphView();
+    void ShortcutToggleStructureView();
     void OnTabZoomChanged(DocumentTab source, double zoomFactor);
 }
 
@@ -57,6 +59,7 @@ public class DocumentTab : IDisposable
     private System.Threading.Timer? _debounceTimer;
 
     private string? _restoreScrollRaw;
+    private int? _pendingScrollLine;
     private string? _lastTempFile;
     private string _effectiveTheme = "light";
     private bool _initialized;
@@ -281,6 +284,9 @@ public class DocumentTab : IDisposable
 
     /// <summary>アセットフォルダ（テンプレート読込などに使用）。</summary>
     protected string AssetsDirectory => _assetsDirectory;
+
+    /// <summary>破棄済みか（派生タブが await 後の続行可否を判定するために使用）。</summary>
+    protected bool IsDisposed => _disposed;
 
     /// <summary>
     /// HTML を表示する。NavigateToString の約 2MB 制限を超える場合は
@@ -579,6 +585,17 @@ public class DocumentTab : IDisposable
         // 関連文書「次に読む」の注入（意味索引が準備済みのときだけ。副作用ゼロ）。
         _ = UpdateRecommendationsAsync(core);
 
+        // 構造クエリ等からの行ジャンプ要求（新タブの初回ロード時）。
+        // 保存済みスクロール位置の復元より優先する。
+        if (_pendingScrollLine is int pendingLine)
+        {
+            _pendingScrollLine = null;
+            _restoreScrollRaw = null;
+            _initialScrollRestored = true;
+            InjectScrollToLine(core, pendingLine);
+            return;
+        }
+
         // 自動リロード時の位置復元が最優先（既存挙動を維持する）。
         if (_restoreScrollRaw != null)
         {
@@ -782,6 +799,42 @@ public class DocumentTab : IDisposable
         _ = core.ExecuteScriptAsync(script);
     }
 
+    /// <summary>
+    /// 指定ソース行（1 始まり）へスクロールする。ページ未ロードなら初回ロード完了時に
+    /// 適用する（保留）。行が見つからない場合は viewer.js 側のフォールバックで先頭へ。
+    /// </summary>
+    public void ScrollToSourceLine(int line)
+    {
+        if (line <= 0 || _disposed)
+        {
+            return;
+        }
+
+        // 自動リロードが飛行中（_restoreScrollRaw 待ち）のときは即時注入すると
+        // 直後の位置復元に上書きされるため、保留に回して次のロード完了時に適用する。
+        var core = WebView.CoreWebView2;
+        if (core != null && _initialScrollRestored && _restoreScrollRaw == null)
+        {
+            InjectScrollToLine(core, line);
+        }
+        else
+        {
+            _pendingScrollLine = line;
+        }
+    }
+
+    /// <summary>
+    /// ソースマップ基盤（viewer.js の __mdvRestoreScrollState）で行位置へスクロールする。
+    /// mermaid 描画等でレイアウトが変わっても行位置に追従して再適用される。
+    /// </summary>
+    private static void InjectScrollToLine(CoreWebView2 core, int line)
+    {
+        string script =
+            "(function(){try{if(typeof window.__mdvRestoreScrollState==='function'){"
+            + "window.__mdvRestoreScrollState({line:" + line + ",offset:0});}}catch(e){}})();";
+        _ = core.ExecuteScriptAsync(script);
+    }
+
     private static void RestoreSavedScroll(CoreWebView2 core, double y)
     {
         string value = y.ToString(CultureInfo.InvariantCulture);
@@ -845,7 +898,8 @@ public class DocumentTab : IDisposable
                 return;
             }
 
-            // グラフビュー等からのファイルオープン要求（{type:'openFile', path}）。
+            // グラフ/構造クエリビュー等からのファイルオープン要求
+            // （{type:'openFile', path} + 省略可能な line で該当行へジャンプ）。
             if (type == "openFile")
             {
                 if (root.TryGetProperty("path", out var pathEl)
@@ -854,7 +908,15 @@ public class DocumentTab : IDisposable
                     string? path = pathEl.GetString();
                     if (!string.IsNullOrEmpty(path))
                     {
-                        OpenInNewTab(path);
+                        int? line = null;
+                        if (root.TryGetProperty("line", out var lineEl)
+                            && lineEl.ValueKind == JsonValueKind.Number
+                            && lineEl.TryGetInt32(out int lineValue)
+                            && lineValue > 0)
+                        {
+                            line = lineValue;
+                        }
+                        OpenInNewTab(path, line);
                     }
                 }
                 return;
@@ -901,6 +963,9 @@ public class DocumentTab : IDisposable
                     break;
                 case "toggleGraphView":
                     _host.ShortcutToggleGraphView();
+                    break;
+                case "toggleStructureView":
+                    _host.ShortcutToggleStructureView();
                     break;
             }
         }
@@ -954,9 +1019,9 @@ public class DocumentTab : IDisposable
         return _driveRoot;
     }
 
-    private void OpenInNewTab(string path)
+    private void OpenInNewTab(string path, int? line = null)
     {
-        WebView.Dispatcher.BeginInvoke(() => _host.OpenFileInNewTab(path));
+        WebView.Dispatcher.BeginInvoke(() => _host.OpenFileInNewTab(path, line));
     }
 
     private static void OpenExternal(string url)
@@ -971,7 +1036,7 @@ public class DocumentTab : IDisposable
         }
     }
 
-    public void Dispose()
+    public virtual void Dispose()
     {
         if (_disposed)
         {

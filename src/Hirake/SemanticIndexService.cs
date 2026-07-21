@@ -1144,7 +1144,8 @@ public static class SemanticIndexService
     /// ブロックレベルの Descendants はインライン木へ入らないため、
     /// リーフブロックの Inline は明示的に、コンテナブロックは再帰で辿る。
     /// </summary>
-    private static string ExtractPlainText(MarkdownObject root)
+    // StructureQueryService（構造クエリビュー）とも共用するため internal。
+    internal static string ExtractPlainText(MarkdownObject root)
     {
         var sb = new StringBuilder();
         WalkBlock(root, sb);
