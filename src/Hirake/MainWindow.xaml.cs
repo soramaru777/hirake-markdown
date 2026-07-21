@@ -68,7 +68,10 @@ public partial class MainWindow : Window, IDocumentTabHost
 
     // ---- ファイルを開く -----------------------------------------------
 
-    public void OpenFile(string path)
+    public void OpenFile(string path) => OpenFile(path, null);
+
+    /// <summary>ファイルをタブで開く。line 指定時は該当ソース行（1 始まり）へスクロールする。</summary>
+    public void OpenFile(string path, int? line)
     {
         string fullPath;
         try
@@ -86,10 +89,19 @@ public partial class MainWindow : Window, IDocumentTabHost
         if (existing != null)
         {
             TabList.SelectedItem = existing;
+            if (line is int existingLine)
+            {
+                existing.ScrollToSourceLine(existingLine);
+            }
             return;
         }
 
         var tab = new DocumentTab(fullPath, this, _assetsDirectory, _tempDirectory);
+        if (line is int newLine)
+        {
+            // 初期化前のため保留され、初回ロード完了時に適用される。
+            tab.ScrollToSourceLine(newLine);
+        }
         tab.WebView.Visibility = Visibility.Collapsed;
         WebViewHost.Children.Add(tab.WebView);
         Tabs.Add(tab);
@@ -106,11 +118,32 @@ public partial class MainWindow : Window, IDocumentTabHost
     /// </summary>
     private void OpenGraphView()
     {
-        string? root = _currentRootFolder;
-        if (root == null && TabList.SelectedItem is DocumentTab active and not GraphTab)
+        // 仮想タブの FilePath はフォルダ自身のため GetDirectoryName すると親に化ける。
+        // アクティブタブの種別ごとにスコープを直接決める（_currentRootFolder は
+        // サイドバー追従で同様に親へずれることがあるため最後のフォールバックのみ）。
+        string? root;
+        switch (TabList.SelectedItem)
         {
-            root = Path.GetDirectoryName(active.FilePath);
+            case GraphTab:
+                return; // 既にグラフビューがアクティブ。
+            case StructureQueryTab structure:
+                root = structure.RootFolder;
+                break;
+            case DocumentTab active:
+                try
+                {
+                    root = Path.GetDirectoryName(active.FilePath);
+                }
+                catch
+                {
+                    root = null;
+                }
+                break;
+            default:
+                root = null;
+                break;
         }
+        root ??= _currentRootFolder;
         if (string.IsNullOrEmpty(root) || !Directory.Exists(root))
         {
             return;
@@ -137,6 +170,66 @@ public partial class MainWindow : Window, IDocumentTabHost
     }
 
     private void GraphButton_Click(object sender, RoutedEventArgs e) => OpenGraphView();
+
+    // ---- 構造クエリビュー ---------------------------------------------
+
+    /// <summary>
+    /// アクティブタブのファイルが属するフォルダを起点に構造クエリビューを開く。
+    /// スコープは横断検索と同じ規則（ワークスペースルートへは広げない）。
+    /// 同一フォルダの構造クエリタブが既にあればアクティブ化のみ行う。
+    /// </summary>
+    private void OpenStructureView()
+    {
+        // アクティブタブの種別ごとにスコープを直接決める（OpenGraphView と同じ理由で、
+        // 仮想タブでは RootFolder を引き継ぎ、_currentRootFolder は最後のフォールバックのみ）。
+        string? root;
+        switch (TabList.SelectedItem)
+        {
+            case StructureQueryTab:
+                return; // 既に構造クエリビューがアクティブ。
+            case GraphTab graph:
+                root = graph.RootFolder;
+                break;
+            case DocumentTab active:
+                try
+                {
+                    root = Path.GetDirectoryName(active.FilePath);
+                }
+                catch
+                {
+                    root = null;
+                }
+                break;
+            default:
+                root = null;
+                break;
+        }
+        root ??= _currentRootFolder;
+
+        if (string.IsNullOrEmpty(root) || !Directory.Exists(root))
+        {
+            return;
+        }
+
+        string fullRoot = Path.GetFullPath(root);
+        var existing = Tabs.OfType<StructureQueryTab>().FirstOrDefault(
+            t => string.Equals(t.RootFolder, fullRoot, StringComparison.OrdinalIgnoreCase));
+        if (existing != null)
+        {
+            TabList.SelectedItem = existing;
+            return;
+        }
+
+        var tab = new StructureQueryTab(fullRoot, this, _assetsDirectory, _tempDirectory);
+        tab.WebView.Visibility = Visibility.Collapsed;
+        WebViewHost.Children.Add(tab.WebView);
+        Tabs.Add(tab);
+        TabList.SelectedItem = tab;
+
+        UpdateEmptyState();
+    }
+
+    private void StructureButton_Click(object sender, RoutedEventArgs e) => OpenStructureView();
 
     // ---- タブを閉じる -------------------------------------------------
 
@@ -450,6 +543,10 @@ public partial class MainWindow : Window, IDocumentTabHost
                     OpenSidebarForSearch();
                     e.Handled = true;
                     return;
+                case Key.S:
+                    OpenStructureView();
+                    e.Handled = true;
+                    return;
             }
         }
 
@@ -596,7 +693,7 @@ public partial class MainWindow : Window, IDocumentTabHost
 
     // ---- IDocumentTabHost ---------------------------------------------
 
-    public void OpenFileInNewTab(string path) => OpenFile(path);
+    public void OpenFileInNewTab(string path, int? line = null) => OpenFile(path, line);
 
     public void ShortcutCloseActive() => CloseActiveTab();
 
@@ -617,6 +714,8 @@ public partial class MainWindow : Window, IDocumentTabHost
     public void ShortcutCycleTheme() => CycleTheme();
 
     public void ShortcutToggleGraphView() => OpenGraphView();
+
+    public void ShortcutToggleStructureView() => OpenStructureView();
 
     /// <summary>あるタブでズームが変わったら、他の全タブへ同じ倍率を反映する。</summary>
     public void OnTabZoomChanged(DocumentTab source, double zoomFactor)

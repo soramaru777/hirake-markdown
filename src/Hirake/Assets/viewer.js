@@ -23,6 +23,7 @@
  *     { type:'shortcut', action:'exportPdf' }        Ctrl+Shift+E
  *     { type:'shortcut', action:'cycleTheme' }       Ctrl+Shift+D
  *     { type:'shortcut', action:'toggleGraphView' }  Ctrl+G
+ *     { type:'shortcut', action:'toggleStructureView' } Ctrl+Shift+S
  *   ホスト→WebView 公開関数:
  *     window.__mdvSetTheme('light'|'dark')  テーマ切替（スクロールは動かさない）
  *     window.__mdvRestoreScroll(y)          スクロール位置の復元（Mermaid 描画後にも再適用）
@@ -1108,6 +1109,11 @@
       if (key === 'd') {
         event.preventDefault();
         postToHost({ type: 'shortcut', action: 'cycleTheme' });
+        return;
+      }
+      if (key === 's') {
+        event.preventDefault();
+        postToHost({ type: 'shortcut', action: 'toggleStructureView' });
         return;
       }
       // 未対応の Ctrl+Shift+* はブラウザ標準に委ねる。
