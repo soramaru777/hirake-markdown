@@ -6,6 +6,9 @@ namespace Hirake;
 /// <summary>検索結果 1 ヒット行。</summary>
 public sealed class SearchHit
 {
+    /// <summary>ヒット元ファイルのフルパス（ヒット行クリックの行ジャンプに使用）。</summary>
+    public string FullPath { get; init; } = string.Empty;
+
     public int LineNumber { get; init; }
     public string Preview { get; init; } = string.Empty;
     public string Display => $"L{LineNumber}: {Preview}";
@@ -223,6 +226,7 @@ public static class FolderSearchService
             {
                 hits.Add(new SearchHit
                 {
+                    FullPath = file,
                     LineNumber = i + 1,
                     Preview = BuildPreview(lines[i], index, query.Length),
                 });
@@ -369,6 +373,7 @@ public static class FolderSearchService
                 {
                     hits.Add(new SearchHit
                     {
+                        FullPath = file,
                         LineNumber = refLine,
                         Preview = $"画像: {imageName}: {BuildPreview(matchSource, index, query.Length)}",
                     });
