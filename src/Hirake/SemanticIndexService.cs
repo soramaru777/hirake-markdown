@@ -50,7 +50,8 @@ public static class SemanticIndexService
     // 索引の 1 ファイルあたりチャンク数上限（巨大ファイルでの過剰な推論コストを抑える）。
     private const int MaxChunksPerFile = 128;
     // 1 文書あたり OCR 対象にする画像参照の上限（超過分は無視）。
-    private const int MaxImagesPerFile = 50;
+    // キーワード検索（FolderSearchService）の OCR ヒット収集とも共用するため internal。
+    internal const int MaxImagesPerFile = 50;
     // 検索時に採用するチャンク上位件数。
     private const int TopChunks = 30;
     // 明らかな無関係・破損由来のスコアを弾く下限（e5 は無関係文でも 0.7 台に寄るため、
@@ -1017,10 +1018,11 @@ public static class SemanticIndexService
 
     /// <summary>
     /// 文書中の画像参照（LinkInline.IsImage）を解決順に列挙する。
-    /// http/https・存在しないパス・対象外拡張子はスキップし、行番号は参照を含む
-    /// 親ブロックの行（1 始まり）を用いる。
+    /// http/https・対象外拡張子・UNC はスキップする（存在チェックは行わず呼び出し側に
+    /// 委ねる）。行番号は参照を含む親ブロックの行（1 始まり）。
     /// </summary>
-    private static IEnumerable<(string Path, int Line)> CollectImageReferences(
+    // キーワード検索（FolderSearchService）の OCR ヒット収集とも共用するため internal。
+    internal static IEnumerable<(string Path, int Line)> CollectImageReferences(
         MarkdownDocument document, string baseDir)
     {
         foreach (MarkdownObject item in document.Descendants())

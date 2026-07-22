@@ -42,12 +42,20 @@ public static class FolderSearchService
     private const int PreviewMaxLength = 100;           // プレビュー 1 行の最大文字数
     private const int MaxDirectoryDepth = 32;
 
-    /// <summary>検索をバックグラウンドで実行する。</summary>
-    public static Task<List<SearchFileResult>> SearchAsync(
+    // 1 検索あたりの OCR 実行時間バジェット（未キャッシュ画像の OCR に使える合計時間）。
+    // キャッシュ済みテキストの照合には影響しない。超過分は今回スキップし
+    // OcrPending として呼び出し側へ伝える（検索のたびにキャッシュが温まり収束する）。
+    private const long MaxOcrMillisPerSearch = 4000;
+
+    /// <summary>
+    /// 検索をバックグラウンドで実行する。OcrPending は「OCR 時間バジェット超過で
+    /// 未 OCR の画像が残っている」ことを示す（再検索で反映される）。
+    /// </summary>
+    public static Task<(List<SearchFileResult> Results, bool OcrPending)> SearchAsync(
         string rootFolder, string query, CancellationToken token)
         => Task.Run(() => Search(rootFolder, query, token), token);
 
-    private static List<SearchFileResult> Search(
+    private static (List<SearchFileResult> Results, bool OcrPending) Search(
         string rootFolder, string query, CancellationToken token)
     {
         var results = new List<SearchFileResult>();
@@ -55,28 +63,63 @@ public static class FolderSearchService
             || string.IsNullOrEmpty(rootFolder)
             || !Directory.Exists(rootFolder))
         {
-            return results;
+            return (results, false);
         }
 
-        int scanned = 0;
-        foreach (var file in EnumerateMarkdownFiles(rootFolder, token))
+        var ocrBudget = new OcrBudget(MaxOcrMillisPerSearch);
+        try
         {
-            token.ThrowIfCancellationRequested();
-
-            if (scanned >= MaxFiles)
+            int scanned = 0;
+            foreach (var file in EnumerateMarkdownFiles(rootFolder, token))
             {
-                break;
-            }
-            scanned++;
+                token.ThrowIfCancellationRequested();
 
-            SearchFileResult? fileResult = SearchInFile(rootFolder, file, query, token);
-            if (fileResult != null)
-            {
-                results.Add(fileResult);
+                if (scanned >= MaxFiles)
+                {
+                    break;
+                }
+                scanned++;
+
+                SearchFileResult? fileResult = SearchInFile(rootFolder, file, query, ocrBudget, token);
+                if (fileResult != null)
+                {
+                    results.Add(fileResult);
+                }
             }
         }
+        finally
+        {
+            // 検索中に実行した OCR の結果をまとめてディスクへ反映する
+            // （1 枚ごとの全量書き込みを避ける。キャンセル時も温まった分は保存）。
+            OcrTextService.FlushCache();
+        }
 
-        return results;
+        return (results, ocrBudget.Exhausted);
+    }
+
+    /// <summary>1 検索分の OCR 実行時間バジェット。超過後の OCR 要求はスキップさせる。</summary>
+    private sealed class OcrBudget
+    {
+        private readonly long _maxMillis;
+        private long _spentMillis;
+
+        public OcrBudget(long maxMillis) => _maxMillis = maxMillis;
+
+        /// <summary>バジェット超過で OCR をスキップした画像があるか。</summary>
+        public bool Exhausted { get; private set; }
+
+        /// <summary>OCR を実行してよければ true。超過していれば Exhausted を立てて false。</summary>
+        public bool TryConsume()
+        {
+            if (_spentMillis >= _maxMillis)
+            {
+                Exhausted = true;
+                return false;
+            }
+            return true;
+        }
+
+        public void Add(long elapsedMillis) => _spentMillis += elapsedMillis;
     }
 
     /// <summary>隠しフォルダ・node_modules・.git をスキップしつつ Markdown を再帰列挙する。</summary>
@@ -134,7 +177,7 @@ public static class FolderSearchService
     }
 
     private static SearchFileResult? SearchInFile(
-        string root, string file, string query, CancellationToken token)
+        string root, string file, string query, OcrBudget ocrBudget, CancellationToken token)
     {
         try
         {
@@ -186,6 +229,21 @@ public static class FolderSearchService
             }
         }
 
+        // 参照画像の OCR テキストに対するヒットを追加する（R2: OCR テキストは
+        // 「ソース」に含める）。OCR 側の失敗はテキスト検索の結果に影響させない。
+        try
+        {
+            AppendOcrHits(file, lines, query, ocrBudget, hits, ref totalHits, token);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            // 解析・OCR の失敗は無視（本文ヒットのみ返す）。
+        }
+
         if (totalHits == 0)
         {
             return null;
@@ -199,6 +257,124 @@ public static class FolderSearchService
             Hits = hits,
             TotalHits = totalHits,
         };
+    }
+
+    /// <summary>
+    /// 文書が参照するローカル画像の OCR テキストへの部分一致ヒットを追加する。
+    /// 抽出は OcrTextService（%LocalAppData%\Hirake\ocr のキャッシュ共用）に委ね、
+    /// キャッシュ済みテキストは常に照合、未キャッシュ画像は 1 検索あたりの
+    /// OCR 時間バジェット内でのみ OCR する（検索のたびにキャッシュが温まる）。
+    /// 対象は Markdown 記法の画像参照のみ（HTML の &lt;img&gt; は意味検索の索引と
+    /// 同様に対象外）。ヒットの行番号は画像参照のソース行（同・画像チャンクと同じ規約）。
+    /// </summary>
+    private static void AppendOcrHits(
+        string file, string[] lines, string query, OcrBudget ocrBudget,
+        List<SearchHit> hits, ref int totalHits, CancellationToken token)
+    {
+        // プリフィルタ: Markdown 画像記法（![）が無いファイルは AST 解析しない
+        // （画像なしフォルダの検索速度を維持する）。
+        bool mayHaveImage = false;
+        foreach (string line in lines)
+        {
+            if (line.Contains("![", StringComparison.Ordinal))
+            {
+                mayHaveImage = true;
+                break;
+            }
+        }
+        if (!mayHaveImage)
+        {
+            return;
+        }
+
+        string baseDir = Path.GetDirectoryName(Path.GetFullPath(file)) ?? string.Empty;
+        Markdig.Syntax.MarkdownDocument document;
+        try
+        {
+            document = Markdig.Markdown.Parse(string.Join("\n", lines), MarkdownRenderer.Pipeline);
+        }
+        catch
+        {
+            return;
+        }
+
+        // 空白除去フォールバック照合は「空白を含まない非 ASCII クエリ」（日本語等）に限る。
+        // Windows OCR は日本語で文字間に空白を挟む（例: 「総 務 部」）ための救済であり、
+        // 英語クエリへ適用すると語境界をまたぐ誤ヒットを生むため。
+        bool useCollapsedFallback =
+            !query.Contains(' ') && !query.Contains('　') && query.Any(c => c > 0x7F);
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach ((string imagePath, int refLine) in
+                 SemanticIndexService.CollectImageReferences(document, baseDir))
+        {
+            token.ThrowIfCancellationRequested();
+            if (seen.Count >= SemanticIndexService.MaxImagesPerFile)
+            {
+                break;
+            }
+            if (!seen.Add(imagePath))
+            {
+                continue; // 重複パスは 1 回だけ
+            }
+
+            // キャッシュ済みなら常に照合。未キャッシュはバジェット内でのみ OCR する。
+            string? text;
+            if (OcrTextService.TryGetCachedText(imagePath, out string cached))
+            {
+                text = cached;
+            }
+            else
+            {
+                if (!ocrBudget.TryConsume())
+                {
+                    continue; // 今回はスキップ（OcrPending として呼び出し側へ伝わる）
+                }
+                long started = Environment.TickCount64;
+                text = OcrTextService.ExtractText(imagePath, token, deferCacheSave: true);
+                ocrBudget.Add(Environment.TickCount64 - started);
+            }
+
+            if (string.IsNullOrEmpty(text))
+            {
+                continue; // 文字なし・対象外・一時失敗はヒットなし扱い
+            }
+
+            string imageName = Path.GetFileName(imagePath);
+            foreach (string ocrLine in text.Split('\n'))
+            {
+                // まず生テキストで照合（英語等、空白が意味を持つ場合）。
+                string matchSource = ocrLine;
+                int index = ocrLine.IndexOf(query, StringComparison.OrdinalIgnoreCase);
+
+                if (index < 0)
+                {
+                    if (!useCollapsedFallback)
+                    {
+                        continue;
+                    }
+                    string collapsed = ocrLine
+                        .Replace(" ", string.Empty)
+                        .Replace("　", string.Empty);
+                    index = collapsed.IndexOf(query, StringComparison.OrdinalIgnoreCase);
+                    if (index < 0)
+                    {
+                        continue;
+                    }
+                    matchSource = collapsed;
+                }
+
+                totalHits++;
+                if (hits.Count < MaxHitsPerFilePreview)
+                {
+                    hits.Add(new SearchHit
+                    {
+                        LineNumber = refLine,
+                        Preview = $"画像: {imageName}: {BuildPreview(matchSource, index, query.Length)}",
+                    });
+                }
+            }
+        }
     }
 
     /// <summary>ヒット位置を中心に前後をトリムした 100 文字程度のプレビューを作る。</summary>
