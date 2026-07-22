@@ -44,6 +44,9 @@ internal static class OcrTextService
     private static Dictionary<string, CacheEntry>? _cache;
     private static readonly object CacheSaveLock = new();
 
+    // deferCacheSave で保存を遅延した未保存エントリがあるか（FlushCache の空振り防止）。
+    private static volatile bool _cacheDirty;
+
     private static string CacheDirectory => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "Hirake", "ocr");
@@ -61,7 +64,69 @@ internal static class OcrTextService
     /// 一時的な読取失敗（破損・共有違反等）は null を返し、キャッシュもしない
     /// （呼び出し側が次回の再試行を判断できるように成功と失敗を区別する）。
     /// </summary>
+    /// <summary>
+    /// キャッシュ済みの OCR テキストのみを返す（OCR は実行しない・副作用なし）。
+    /// 有効なキャッシュがあれば true。対象外拡張子・サイズ超過・非存在は
+    /// 「確定的な文字なし」として true / 空文字を返す。
+    /// </summary>
+    internal static bool TryGetCachedText(string imagePath, out string text)
+    {
+        text = string.Empty;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(imagePath))
+            {
+                return true;
+            }
+
+            string full = Path.GetFullPath(imagePath);
+            if (!IsSupportedExtension(Path.GetExtension(full)))
+            {
+                return true;
+            }
+
+            FileInfo info;
+            try
+            {
+                info = new FileInfo(full);
+                if (!info.Exists || info.Length > MaxImageBytes)
+                {
+                    return true;
+                }
+            }
+            catch
+            {
+                return true;
+            }
+
+            Dictionary<string, CacheEntry> cache = LoadCache();
+            lock (CacheLock)
+            {
+                if (cache.TryGetValue(full.ToLowerInvariant(), out CacheEntry? hit)
+                    && hit.MtimeUtcTicks == info.LastWriteTimeUtc.Ticks
+                    && hit.Length == info.Length)
+                {
+                    text = hit.Text;
+                    return true;
+                }
+            }
+            return false;
+        }
+        catch
+        {
+            return true; // 想定外の失敗は「文字なし確定」として扱う（再OCRさせない）。
+        }
+    }
+
     internal static string? ExtractText(string imagePath, CancellationToken ct)
+        => ExtractText(imagePath, ct, deferCacheSave: false);
+
+    /// <param name="deferCacheSave">
+    /// true のとき、OCR 結果はメモリキャッシュにのみ反映しディスク保存を遅延する。
+    /// 呼び出し側がまとめて <see cref="FlushCache"/> を呼ぶこと（対話検索など
+    /// 高頻度経路で 1 枚ごとの全量書き込みを避ける）。
+    /// </param>
+    internal static string? ExtractText(string imagePath, CancellationToken ct, bool deferCacheSave)
     {
         try
         {
@@ -130,7 +195,14 @@ internal static class OcrTextService
                     Text = text,
                 };
             }
-            SaveCache();
+            if (deferCacheSave)
+            {
+                _cacheDirty = true;
+            }
+            else
+            {
+                SaveCache();
+            }
             return text;
         }
         catch (OperationCanceledException)
@@ -184,9 +256,32 @@ internal static class OcrTextService
         return _engine;
     }
 
+    /// <summary>
+    /// 遅延保存（deferCacheSave）分をディスクへ反映する。未保存分が無ければ何もしない。
+    /// 冪等・失敗無視。
+    /// </summary>
+    internal static void FlushCache()
+    {
+        if (!_cacheDirty)
+        {
+            return;
+        }
+        // 保存開始前に false へ戻す（保存中の並行更新を dirty として残すため）。
+        // 保存に失敗したら dirty に戻し、次回の Flush で再試行させる。
+        _cacheDirty = false;
+        if (!SaveCache())
+        {
+            _cacheDirty = true;
+        }
+    }
+
     // BGRA8 展開後の総ピクセル数上限（25M ピクセル ≒ 100MB）。
     // 圧縮率の高い巨大画像（展開爆弾）によるメモリ枯渇を防ぐ。
     private const long MaxImagePixels = 25_000_000;
+
+    // OcrEngine はプロセス内共有だが RecognizeAsync のスレッド安全性は WinRT 実装依存の
+    // ため、認識処理は 1 件ずつ直列化する（索引と対話検索が並行しても安全に）。
+    private static readonly SemaphoreSlim OcrGate = new(1, 1);
 
     /// <summary>
     /// FileStream → BitmapDecoder → SoftwareBitmap(Bgra8, Premultiplied) → OCR。
@@ -219,7 +314,16 @@ internal static class OcrTextService
                 .GetSoftwareBitmapAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied)
                 .AsTask(ct).GetAwaiter().GetResult();
 
-            OcrResult result = engine.RecognizeAsync(bitmap).AsTask(ct).GetAwaiter().GetResult();
+            OcrResult result;
+            OcrGate.Wait(ct);
+            try
+            {
+                result = engine.RecognizeAsync(bitmap).AsTask(ct).GetAwaiter().GetResult();
+            }
+            finally
+            {
+                OcrGate.Release();
+            }
 
             var sb = new StringBuilder();
             foreach (OcrLine line in result.Lines)
@@ -278,7 +382,8 @@ internal static class OcrTextService
         }
     }
 
-    private static void SaveCache()
+    /// <returns>保存に成功（または保存対象なし）で true、失敗で false。</returns>
+    private static bool SaveCache()
     {
         try
         {
@@ -295,7 +400,7 @@ internal static class OcrTextService
                 {
                     if (_cache == null)
                     {
-                        return;
+                        return true;
                     }
                     snapshot = new Dictionary<string, CacheEntry>(_cache, StringComparer.OrdinalIgnoreCase);
                 }
@@ -304,10 +409,12 @@ internal static class OcrTextService
                 File.WriteAllText(tmp, json, Encoding.UTF8);
                 File.Move(tmp, dest, overwrite: true);
             }
+            return true;
         }
         catch
         {
-            // 保存失敗は無視（次回再 OCR される）。
+            // 保存失敗は握りつぶす（呼び出し側が dirty 復帰・再試行を判断する）。
+            return false;
         }
     }
 }

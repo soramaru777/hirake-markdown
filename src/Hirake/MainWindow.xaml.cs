@@ -1081,9 +1081,10 @@ public partial class MainWindow : Window, IDocumentTabHost
         SearchEmptyLabel.Visibility = Visibility.Collapsed;
 
         List<SearchFileResult> results;
+        bool ocrPending;
         try
         {
-            results = await FolderSearchService.SearchAsync(root, query, cts.Token);
+            (results, ocrPending) = await FolderSearchService.SearchAsync(root, query, cts.Token);
         }
         catch (OperationCanceledException)
         {
@@ -1092,6 +1093,7 @@ public partial class MainWindow : Window, IDocumentTabHost
         catch
         {
             results = new List<SearchFileResult>();
+            ocrPending = false;
         }
 
         // 実行後に別の検索へ切り替わっていたら破棄する。
@@ -1100,17 +1102,22 @@ public partial class MainWindow : Window, IDocumentTabHost
             return;
         }
 
+        // OCR 時間バジェット超過で未 OCR の画像が残っている場合はその旨を示す
+        // （再検索のたびにキャッシュが温まり反映されていく）。0 件時も隠さない。
+        const string ocrPendingNote = "画像OCR準備中（再検索で反映）";
+
         SearchResultsList.ItemsSource = results;
         int totalHits = results.Sum(r => r.TotalHits);
         if (results.Count == 0)
         {
-            SearchSummary.Text = string.Empty;
+            SearchSummary.Text = ocrPending ? ocrPendingNote : string.Empty;
             SearchEmptyLabel.Text = "一致する項目がありません";
             SearchEmptyLabel.Visibility = Visibility.Visible;
         }
         else
         {
-            SearchSummary.Text = $"{totalHits} 件ヒット（{results.Count} ファイル）";
+            SearchSummary.Text = $"{totalHits} 件ヒット（{results.Count} ファイル）"
+                + (ocrPending ? "・" + ocrPendingNote : string.Empty);
             SearchEmptyLabel.Visibility = Visibility.Collapsed;
         }
     }
