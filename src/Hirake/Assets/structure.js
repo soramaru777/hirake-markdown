@@ -333,6 +333,11 @@
         postToHost({ type: 'shortcut', action: 'toggleStructureView' });
         return;
       }
+      if (key === 'r') {
+        event.preventDefault();
+        postToHost({ type: 'shortcut', action: 'toggleFingerprintView' });
+        return;
+      }
       // 未対応の Ctrl+Shift+* はブラウザ標準に委ねる。
       return;
     }

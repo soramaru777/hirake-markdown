@@ -129,6 +129,9 @@ public partial class MainWindow : Window, IDocumentTabHost
             case StructureQueryTab structure:
                 root = structure.RootFolder;
                 break;
+            case FingerprintTab fingerprint:
+                root = fingerprint.RootFolder;
+                break;
             case DocumentTab active:
                 try
                 {
@@ -190,6 +193,9 @@ public partial class MainWindow : Window, IDocumentTabHost
             case GraphTab graph:
                 root = graph.RootFolder;
                 break;
+            case FingerprintTab fingerprint:
+                root = fingerprint.RootFolder;
+                break;
             case DocumentTab active:
                 try
                 {
@@ -230,6 +236,67 @@ public partial class MainWindow : Window, IDocumentTabHost
     }
 
     private void StructureButton_Click(object sender, RoutedEventArgs e) => OpenStructureView();
+
+    // ---- 文書指紋・類似検出ビュー -------------------------------------
+
+    /// <summary>
+    /// アクティブタブのファイルが属するフォルダを起点に文書指紋ビューを開く。
+    /// スコープ決定は構造クエリビューと同じ規則。
+    /// 同一フォルダの指紋タブが既にあればアクティブ化のみ行う。
+    /// </summary>
+    private void OpenFingerprintView()
+    {
+        string? root;
+        switch (TabList.SelectedItem)
+        {
+            case FingerprintTab:
+                return; // 既に指紋ビューがアクティブ。
+            case GraphTab graph:
+                root = graph.RootFolder;
+                break;
+            case StructureQueryTab structure:
+                root = structure.RootFolder;
+                break;
+            case DocumentTab active:
+                try
+                {
+                    root = Path.GetDirectoryName(active.FilePath);
+                }
+                catch
+                {
+                    root = null;
+                }
+                break;
+            default:
+                root = null;
+                break;
+        }
+        root ??= _currentRootFolder;
+
+        if (string.IsNullOrEmpty(root) || !Directory.Exists(root))
+        {
+            return;
+        }
+
+        string fullRoot = Path.GetFullPath(root);
+        var existing = Tabs.OfType<FingerprintTab>().FirstOrDefault(
+            t => string.Equals(t.RootFolder, fullRoot, StringComparison.OrdinalIgnoreCase));
+        if (existing != null)
+        {
+            TabList.SelectedItem = existing;
+            return;
+        }
+
+        var tab = new FingerprintTab(fullRoot, this, _assetsDirectory, _tempDirectory);
+        tab.WebView.Visibility = Visibility.Collapsed;
+        WebViewHost.Children.Add(tab.WebView);
+        Tabs.Add(tab);
+        TabList.SelectedItem = tab;
+
+        UpdateEmptyState();
+    }
+
+    private void FingerprintButton_Click(object sender, RoutedEventArgs e) => OpenFingerprintView();
 
     // ---- タブを閉じる -------------------------------------------------
 
@@ -547,6 +614,10 @@ public partial class MainWindow : Window, IDocumentTabHost
                     OpenStructureView();
                     e.Handled = true;
                     return;
+                case Key.R:
+                    OpenFingerprintView();
+                    e.Handled = true;
+                    return;
             }
         }
 
@@ -716,6 +787,8 @@ public partial class MainWindow : Window, IDocumentTabHost
     public void ShortcutToggleGraphView() => OpenGraphView();
 
     public void ShortcutToggleStructureView() => OpenStructureView();
+
+    public void ShortcutToggleFingerprintView() => OpenFingerprintView();
 
     /// <summary>あるタブでズームが変わったら、他の全タブへ同じ倍率を反映する。</summary>
     public void OnTabZoomChanged(DocumentTab source, double zoomFactor)

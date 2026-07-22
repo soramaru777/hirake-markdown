@@ -138,6 +138,20 @@
                             Cursor="Hand"
                             ToolTip="構造クエリ (Ctrl+Shift+S)" />
 
+                    <Button x:Name="FingerprintButton"
+                            Click="FingerprintButton_Click"
+                            Content="&#xE928;"
+                            FontFamily="Segoe MDL2 Assets"
+                            FontSize="14"
+                            Padding="8,4"
+                            Margin="4,2,0,2"
+                            VerticalAlignment="Center"
+                            BorderThickness="0"
+                            Background="Transparent"
+                            Foreground="{DynamicResource ChromeText}"
+                            Cursor="Hand"
+                            ToolTip="文書指紋・類似検出 (Ctrl+Shift+R)" />
+
                     <Button x:Name="ExportPdfButton"
                             Click="ExportPdfButton_Click"
                             Content="&#xE8A5;"
