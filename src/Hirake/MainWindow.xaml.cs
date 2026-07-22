@@ -1229,6 +1229,22 @@ public partial class MainWindow : Window, IDocumentTabHost
         }
     }
 
+    /// <summary>
+    /// ヒット行（L12: プレビュー）クリック: 該当ファイルを該当行で開く。
+    /// e.Handled でファイル項目側の SearchResult_MouseUp（行ジャンプなし）を抑止する。
+    /// FullPath 未設定のヒットは従来動作（ファイル項目側）へフォールバックする。
+    /// </summary>
+    private void SearchHit_MouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement fe
+            && fe.DataContext is SearchHit hit
+            && !string.IsNullOrEmpty(hit.FullPath))
+        {
+            OpenFile(hit.FullPath, hit.LineNumber);
+            e.Handled = true;
+        }
+    }
+
     // ---- テーマ切替 ---------------------------------------------------
 
     /// <summary>テーマ設定を auto → light → dark → auto と巡回して反映・保存する。</summary>

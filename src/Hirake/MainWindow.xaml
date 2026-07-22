@@ -389,10 +389,29 @@
                                         <ItemsControl ItemsSource="{Binding Hits}" Margin="0,2,0,0">
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate>
+                                                    <!-- ヒット行クリックで該当行へジャンプ（ファイル部クリックとは別動作） -->
+                                                    <!-- Background=Transparent で行全体をヒットテスト可能にする -->
                                                     <TextBlock Text="{Binding Display}"
                                                                FontSize="11"
                                                                TextTrimming="CharacterEllipsis"
-                                                               Foreground="{DynamicResource ChromeSubText}" />
+                                                               Cursor="Hand"
+                                                               Background="Transparent"
+                                                               ToolTip="クリックで該当行へジャンプ"
+                                                               MouseLeftButtonUp="SearchHit_MouseUp">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Foreground"
+                                                                        Value="{DynamicResource ChromeSubText}" />
+                                                                <Style.Triggers>
+                                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                                        <Setter Property="Foreground"
+                                                                                Value="{DynamicResource ChromeAccent}" />
+                                                                        <Setter Property="TextDecorations" Value="Underline" />
+                                                                    </Trigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
                                                 </DataTemplate>
                                             </ItemsControl.ItemTemplate>
                                         </ItemsControl>

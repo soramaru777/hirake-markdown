@@ -392,6 +392,7 @@ public static class SemanticIndexService
             }
             entry.Hits.Add(new SearchHit
             {
+                FullPath = chunk.Path,
                 LineNumber = chunk.Line,
                 Preview = BuildHitPreview(chunk.Heading, score),
             });
