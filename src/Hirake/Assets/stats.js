@@ -412,6 +412,11 @@
         postToHost({ type: 'shortcut', action: 'toggleStatsView' });
         return;
       }
+      if (key === 'c') {
+        event.preventDefault();
+        postToHost({ type: 'shortcut', action: 'toggleCanvasView' });
+        return;
+      }
       // 未対応の Ctrl+Shift+* はブラウザ標準に委ねる。
       return;
     }

@@ -135,6 +135,9 @@ public partial class MainWindow : Window, IDocumentTabHost
             case StatsTab stats:
                 root = stats.RootFolder;
                 break;
+            case CanvasTab canvas:
+                root = canvas.RootFolder;
+                break;
             case DocumentTab active:
                 try
                 {
@@ -202,6 +205,9 @@ public partial class MainWindow : Window, IDocumentTabHost
             case StatsTab stats:
                 root = stats.RootFolder;
                 break;
+            case CanvasTab canvas:
+                root = canvas.RootFolder;
+                break;
             case DocumentTab active:
                 try
                 {
@@ -265,6 +271,9 @@ public partial class MainWindow : Window, IDocumentTabHost
                 break;
             case StatsTab stats:
                 root = stats.RootFolder;
+                break;
+            case CanvasTab canvas:
+                root = canvas.RootFolder;
                 break;
             case DocumentTab active:
                 try
@@ -370,6 +379,73 @@ public partial class MainWindow : Window, IDocumentTabHost
     }
 
     private void StatsButton_Click(object sender, RoutedEventArgs e) => OpenStatsView();
+
+    // ---- 無限キャンバス・モード ---------------------------------------
+
+    /// <summary>
+    /// ワークスペースルートを起点に無限キャンバス・モードを開く（ADR-0001 案B）。
+    /// グラフビューと同じく FindWorkspaceRoot で親フォルダ側のリンクも含める。
+    /// 同一ルートのキャンバスタブが既にあればアクティブ化のみ行う。
+    /// </summary>
+    private void OpenCanvasView()
+    {
+        string? root;
+        switch (TabList.SelectedItem)
+        {
+            case CanvasTab:
+                return; // 既にキャンバスがアクティブ。
+            case GraphTab graph:
+                root = graph.RootFolder;
+                break;
+            case StructureQueryTab structure:
+                root = structure.RootFolder;
+                break;
+            case FingerprintTab fingerprint:
+                root = fingerprint.RootFolder;
+                break;
+            case StatsTab stats:
+                root = stats.RootFolder;
+                break;
+            case DocumentTab active:
+                try
+                {
+                    root = Path.GetDirectoryName(active.FilePath);
+                }
+                catch
+                {
+                    root = null;
+                }
+                break;
+            default:
+                root = null;
+                break;
+        }
+        root ??= _currentRootFolder;
+
+        if (string.IsNullOrEmpty(root) || !Directory.Exists(root))
+        {
+            return;
+        }
+
+        string fullRoot = LinkGraphService.FindWorkspaceRoot(root);
+        var existing = Tabs.OfType<CanvasTab>().FirstOrDefault(
+            t => string.Equals(t.RootFolder, fullRoot, StringComparison.OrdinalIgnoreCase));
+        if (existing != null)
+        {
+            TabList.SelectedItem = existing;
+            return;
+        }
+
+        var tab = new CanvasTab(fullRoot, this, _assetsDirectory, _tempDirectory);
+        tab.WebView.Visibility = Visibility.Collapsed;
+        WebViewHost.Children.Add(tab.WebView);
+        Tabs.Add(tab);
+        TabList.SelectedItem = tab;
+
+        UpdateEmptyState();
+    }
+
+    private void CanvasButton_Click(object sender, RoutedEventArgs e) => OpenCanvasView();
 
     // ---- タブを閉じる -------------------------------------------------
 
@@ -695,6 +771,10 @@ public partial class MainWindow : Window, IDocumentTabHost
                     OpenStatsView();
                     e.Handled = true;
                     return;
+                case Key.C:
+                    OpenCanvasView();
+                    e.Handled = true;
+                    return;
             }
         }
 
@@ -868,6 +948,8 @@ public partial class MainWindow : Window, IDocumentTabHost
     public void ShortcutToggleFingerprintView() => OpenFingerprintView();
 
     public void ShortcutToggleStatsView() => OpenStatsView();
+
+    public void ShortcutToggleCanvasView() => OpenCanvasView();
 
     /// <summary>あるタブでズームが変わったら、他の全タブへ同じ倍率を反映する。</summary>
     public void OnTabZoomChanged(DocumentTab source, double zoomFactor)

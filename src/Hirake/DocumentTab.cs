@@ -27,6 +27,7 @@ public interface IDocumentTabHost
     void ShortcutToggleStructureView();
     void ShortcutToggleFingerprintView();
     void ShortcutToggleStatsView();
+    void ShortcutToggleCanvasView();
     void OnTabZoomChanged(DocumentTab source, double zoomFactor);
 }
 
@@ -40,6 +41,7 @@ public class DocumentTab : IDisposable
 {
     private const string AssetsHost = "assets.hirake";
     private const string TempHost = "temp.hirake";
+    private const string ThumbsHost = "thumbs.hirake";
 
     // doc 仮想ホストの命名規則（"doc.hirake" / "&lt;letter&gt;.doc.hirake"）は
     // MarkdownRenderer を唯一の真実源とし、そこから参照する（重複実装を避ける）。
@@ -116,6 +118,18 @@ public class DocumentTab : IDisposable
             AssetsHost, _assetsDirectory, CoreWebView2HostResourceAccessKind.Allow);
         core.SetVirtualHostNameToFolderMapping(
             TempHost, _tempDirectory, CoreWebView2HostResourceAccessKind.Allow);
+
+        // キャンバスのサムネイル置場（無くても他機能に影響しないため失敗は無視）。
+        try
+        {
+            Directory.CreateDirectory(CanvasLayoutStore.ThumbsDirectory);
+            core.SetVirtualHostNameToFolderMapping(
+                ThumbsHost, CanvasLayoutStore.ThumbsDirectory, CoreWebView2HostResourceAccessKind.Allow);
+        }
+        catch
+        {
+            // ignore
+        }
 
         // ドキュメント用: 各固定ドライブを "<ドライブ文字小文字>.doc.hirake" にマップし、
         // 別ドライブへの絶対パスリンクも解決できるようにする。
@@ -533,6 +547,9 @@ public class DocumentTab : IDisposable
             _restoreScrollRaw = null;
         }
 
+        // 内容が変わったため、次のロード完了時にサムネイルを撮り直す。
+        _thumbnailCaptured = false;
+
         await LoadContentAsync().ConfigureAwait(true);
     }
 
@@ -586,6 +603,9 @@ public class DocumentTab : IDisposable
 
         // 関連文書「次に読む」の注入（意味索引が準備済みのときだけ。副作用ゼロ）。
         _ = UpdateRecommendationsAsync(core);
+
+        // キャンバス用サムネイルの取得（1 タブ 1 回・失敗は無視）。
+        _ = CaptureThumbnailAsync(core);
 
         // 構造クエリ等からの行ジャンプ要求（新タブの初回ロード時）。
         // 保存済みスクロール位置の復元より優先する。
@@ -788,6 +808,103 @@ public class DocumentTab : IDisposable
     }
 
     /// <summary>
+    /// キャンバスビューの配置保存要求（{type:'canvasLayout', ...}）のフック。
+    /// 既定は何もしない。CanvasTab がオーバーライドして永続化する。
+    /// </summary>
+    protected virtual void OnCanvasLayoutMessage(System.Text.Json.JsonElement message)
+    {
+    }
+
+    // ---- キャンバス用サムネイル ---------------------------------------
+
+    private bool _thumbnailCaptured;
+    private bool _thumbnailCapturing;
+
+    // CapturePreviewAsync が返らないケース（撮影中の非表示化等）に備えたタイムアウト。
+    private static readonly TimeSpan ThumbnailCaptureTimeout = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// 表示中の文書のサムネイルを 1 回だけ撮ってキャンバス用置場へ保存する。
+    /// 失敗・非表示（Collapsed のタブでは CapturePreviewAsync が完了しないことがある）は
+    /// 静かにスキップし、次回のタブ表示で再試行される。
+    /// 自動リロード時は再撮影する（ReloadPreservingScrollAsync がフラグを戻す）。
+    /// </summary>
+    private async Task CaptureThumbnailAsync(CoreWebView2 core)
+    {
+        if (_thumbnailCaptured || _thumbnailCapturing || !File.Exists(FilePath))
+        {
+            return;
+        }
+        _thumbnailCapturing = true;
+
+        try
+        {
+            // mermaid / KaTeX 等の描画が落ち着くのを待つ。
+            await Task.Delay(1500).ConfigureAwait(true);
+            if (_disposed || WebView.CoreWebView2 == null
+                || WebView.Visibility != Visibility.Visible)
+            {
+                return;
+            }
+
+            Directory.CreateDirectory(CanvasLayoutStore.ThumbsDirectory);
+            string path = CanvasLayoutStore.ThumbnailPathFor(FilePath);
+            string tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            FileStream? stream = null;
+            try
+            {
+                stream = File.Create(tmp);
+                Task capture = core.CapturePreviewAsync(
+                    CoreWebView2CapturePreviewImageFormat.Png, stream);
+                Task completed = await Task.WhenAny(
+                    capture, Task.Delay(ThumbnailCaptureTimeout)).ConfigureAwait(true);
+                if (!ReferenceEquals(completed, capture))
+                {
+                    // タイムアウト: ストリームを閉じて撮影を失敗させ、例外は観測して捨てる。
+                    stream.Dispose();
+                    stream = null;
+                    _ = capture.ContinueWith(
+                        t => _ = t.Exception,
+                        TaskContinuationOptions.OnlyOnFaulted);
+                    TryDeleteFile(tmp);
+                    return;
+                }
+
+                await capture.ConfigureAwait(true);
+                stream.Dispose();
+                stream = null;
+                File.Move(tmp, path, overwrite: true);
+                _thumbnailCaptured = true;
+            }
+            catch
+            {
+                stream?.Dispose();
+                TryDeleteFile(tmp);
+            }
+        }
+        catch
+        {
+            // サムネイルは補助機能。失敗しても本文表示に影響させない。
+        }
+        finally
+        {
+            _thumbnailCapturing = false;
+        }
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch
+        {
+            // ignore
+        }
+    }
+
+    /// <summary>
     /// ソース行ベースのスクロール復元。stateJson は自前の __mdvGetScrollState が返した
     /// JSON（ExecuteScriptAsync の戻り値そのまま）なので、JS オブジェクトリテラルとして安全に埋め込める。
     /// </summary>
@@ -924,6 +1041,13 @@ public class DocumentTab : IDisposable
                 return;
             }
 
+            // キャンバスビューからの配置保存要求（CanvasTab がオーバーライドで処理）。
+            if (type == "canvasLayout")
+            {
+                OnCanvasLayoutMessage(root);
+                return;
+            }
+
             if (type != "shortcut")
             {
                 return;
@@ -975,6 +1099,9 @@ public class DocumentTab : IDisposable
                 case "toggleStatsView":
                     _host.ShortcutToggleStatsView();
                     break;
+                case "toggleCanvasView":
+                    _host.ShortcutToggleCanvasView();
+                    break;
             }
         }
         catch (JsonException)
@@ -988,6 +1115,7 @@ public class DocumentTab : IDisposable
     private static bool IsInternalHost(string host) =>
         host.Equals(AssetsHost, StringComparison.OrdinalIgnoreCase)
         || host.Equals(TempHost, StringComparison.OrdinalIgnoreCase)
+        || host.Equals(ThumbsHost, StringComparison.OrdinalIgnoreCase)
         || IsDocHost(host);
 
     /// <summary>doc.hirake 本体、または "&lt;letter&gt;.doc.hirake" を内部ホストとみなす。</summary>

@@ -124,6 +124,20 @@
                             Cursor="Hand"
                             ToolTip="ナレッジグラフ (Ctrl+G)" />
 
+                    <Button x:Name="CanvasButton"
+                            Click="CanvasButton_Click"
+                            Content="&#xE81E;"
+                            FontFamily="Segoe MDL2 Assets"
+                            FontSize="14"
+                            Padding="8,4"
+                            Margin="4,2,0,2"
+                            VerticalAlignment="Center"
+                            BorderThickness="0"
+                            Background="Transparent"
+                            Foreground="{DynamicResource ChromeText}"
+                            Cursor="Hand"
+                            ToolTip="無限キャンバス (Ctrl+Shift+C)" />
+
                     <Button x:Name="StructureButton"
                             Click="StructureButton_Click"
                             Content="&#xE8FD;"

@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="ja" data-theme="{{THEME}}">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="color-scheme" content="light dark">
+<title>{{TITLE}}</title>
+<style>
+  /* ---------------------------------------------------------
+   * Hirake - canvas-template.html 用インラインスタイル
+   * 無限キャンバス・モード専用（ADR-0001 案B）。style.css は読み込まない。
+   * 配色は CSS カスタムプロパティで定義し、ライト/ダークは
+   * html[data-theme="dark"] で切替える（JS からは色を直接触らない）。
+   * --------------------------------------------------------- */
+  :root {
+    /* ---- ライトテーマ（既定） ---- */
+    --cv-bg: #ffffff;
+    --cv-grid: #f0f2f5;
+    --cv-node: #4a86c7;
+    --cv-node-stroke: #2f5f96;
+    --cv-node-hover: #f2a93b;
+    --cv-edge: #d1d9e0;
+    --cv-edge-hover: #b9c2cc;
+    --cv-label: #1f2328;
+    --cv-label-muted: #59636e;
+    --cv-accent: #d1683c;
+    --cv-card-bg: #ffffff;
+    --cv-card-border: #d1d9e0;
+    --cv-card-border-pinned: #0969da;
+    --cv-card-shadow: rgba(31, 35, 40, 0.12);
+    --cv-info-bg: rgba(246, 248, 250, 0.85);
+    --cv-info-border: #d1d9e0;
+    --cv-info-text: #1f2328;
+    --cv-empty-text: #59636e;
+  }
+
+  /* ---- ダークテーマ（GitHub Dark 風） ---- */
+  html[data-theme="dark"] {
+    --cv-bg: #0d1117;
+    --cv-grid: #161b22;
+    --cv-node: #58a6ff;
+    --cv-node-stroke: #1f6feb;
+    --cv-node-hover: #d29922;
+    --cv-edge: #30363d;
+    --cv-edge-hover: #484f58;
+    --cv-label: #e6edf3;
+    --cv-label-muted: #8b949e;
+    --cv-accent: #ff8a4c;
+    --cv-card-bg: #161b22;
+    --cv-card-border: #30363d;
+    --cv-card-border-pinned: #58a6ff;
+    --cv-card-shadow: rgba(0, 0, 0, 0.45);
+    --cv-info-bg: rgba(22, 27, 34, 0.85);
+    --cv-info-border: #30363d;
+    --cv-info-text: #e6edf3;
+    --cv-empty-text: #8b949e;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background-color: var(--cv-bg);
+  }
+
+  body {
+    font-family: -apple-system, "Segoe UI", "Yu Gothic UI", Meiryo, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------- ステージ（ズーム対象の親） ---------- */
+
+  #cv-stage {
+    position: absolute;
+    inset: 0;
+    cursor: grab;
+    overflow: hidden;
+  }
+
+  #cv-stage.dragging {
+    cursor: grabbing;
+  }
+
+  /* エッジ用 SVG とカード用 HTML レイヤーは同一座標系。
+     ズーム変換は JS が transform で両方に同じ値を適用する。 */
+  #cv-svg {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+
+  #cv-cards {
+    position: absolute;
+    left: 0;
+    top: 0;
+    transform-origin: 0 0;
+    pointer-events: none; /* カード個々で有効化 */
+  }
+
+  /* ---------- 遠景: ノード + エッジ（graph.js と同系の見た目） ---------- */
+
+  .cv-edge {
+    stroke: var(--cv-edge);
+    stroke-width: 1.2px;
+    fill: none;
+  }
+
+  .cv-edge.is-adjacent {
+    stroke: var(--cv-accent);
+    stroke-width: 1.8px;
+  }
+
+  .cv-node-circle {
+    fill: var(--cv-node);
+    stroke: var(--cv-node-stroke);
+    stroke-width: 1.5px;
+    cursor: pointer;
+  }
+
+  .cv-node-circle.is-hover {
+    fill: var(--cv-node-hover);
+  }
+
+  .cv-node-circle.is-pinned {
+    stroke-width: 3px;
+  }
+
+  .cv-node-label {
+    fill: var(--cv-label);
+    font-size: 11px;
+    pointer-events: none;
+    text-anchor: middle;
+    user-select: none;
+  }
+
+  .cv-node-label.is-hover {
+    fill: var(--cv-accent);
+    font-weight: 600;
+  }
+
+  /* カードモードでは遠景ノードを隠す（エッジは薄く残す） */
+  body.mode-card .cv-node-circle,
+  body.mode-card .cv-node-label {
+    display: none;
+  }
+
+  body.mode-card .cv-edge {
+    opacity: 0.5;
+  }
+
+  /* ---------- 中間: カード ---------- */
+
+  .cv-card {
+    position: absolute;
+    width: 180px;
+    height: 130px;
+    border: 1.5px solid var(--cv-card-border);
+    border-radius: 8px;
+    background: var(--cv-card-bg);
+    box-shadow: 0 2px 8px var(--cv-card-shadow);
+    overflow: hidden;
+    cursor: pointer;
+    pointer-events: auto;
+    display: none; /* カードモードでのみ表示 */
+    user-select: none;
+  }
+
+  body.mode-card .cv-card {
+    display: block;
+  }
+
+  .cv-card.is-pinned {
+    border-color: var(--cv-card-border-pinned);
+    border-width: 2px;
+  }
+
+  .cv-card:hover {
+    border-color: var(--cv-accent);
+  }
+
+  .cv-card-thumb {
+    width: 100%;
+    height: 96px;
+    object-fit: cover;
+    object-position: top;
+    display: block;
+    background: var(--cv-grid);
+  }
+
+  .cv-card-thumb-empty {
+    width: 100%;
+    height: 96px;
+    background: var(--cv-grid);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--cv-label-muted);
+    font-size: 24px;
+  }
+
+  .cv-card-name {
+    padding: 4px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--cv-label);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* ---------- 情報バー ---------- */
+
+  #cv-info {
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    z-index: 10;
+    padding: 6px 12px;
+    border: 1px solid var(--cv-info-border);
+    border-radius: 6px;
+    background: var(--cv-info-bg);
+    color: var(--cv-info-text);
+    font-size: 12px;
+    line-height: 1.5;
+    pointer-events: none;
+    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
+  }
+
+  #cv-info .cv-info-folder {
+    font-weight: 600;
+  }
+
+  #cv-info .cv-info-counts,
+  #cv-info .cv-info-note {
+    color: var(--cv-label-muted);
+  }
+
+  #cv-hint {
+    position: fixed;
+    bottom: 12px;
+    left: 12px;
+    z-index: 10;
+    color: var(--cv-empty-text);
+    font-size: 11px;
+    pointer-events: none;
+  }
+
+  /* ---------- 空状態 ---------- */
+
+  #cv-empty {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 5;
+    color: var(--cv-empty-text);
+    font-size: 14px;
+    text-align: center;
+    display: none;
+  }
+
+  #cv-empty.visible {
+    display: block;
+  }
+</style>
+</head>
+<body>
+
+<div id="cv-info">
+  <span class="cv-info-folder"></span>
+  <span class="cv-info-counts"></span>
+  <span class="cv-info-note"></span>
+</div>
+
+<div id="cv-hint">ホイール: ズーム（拡大でカード表示） / ドラッグ: パン・配置（配置はピン留め） / 右クリック: ピン解除 / ダブルクリック: 開く</div>
+
+<div id="cv-empty">このフォルダに Markdown ファイルが見つかりません</div>
+
+<div id="cv-stage">
+  <svg id="cv-svg"></svg>
+  <div id="cv-cards"></div>
+</div>
+
+<script>window.__canvasData = {{DATA}};</script>
+<script src="https://assets.hirake/vendor/d3.v7.min.js"></script>
+<script src="https://assets.hirake/canvas.js" defer></script>
+</body>
+</html>
