@@ -26,6 +26,7 @@ public interface IDocumentTabHost
     void ShortcutToggleGraphView();
     void ShortcutToggleStructureView();
     void ShortcutToggleFingerprintView();
+    void ShortcutToggleStatsView();
     void OnTabZoomChanged(DocumentTab source, double zoomFactor);
 }
 
@@ -970,6 +971,9 @@ public class DocumentTab : IDisposable
                     break;
                 case "toggleFingerprintView":
                     _host.ShortcutToggleFingerprintView();
+                    break;
+                case "toggleStatsView":
+                    _host.ShortcutToggleStatsView();
                     break;
             }
         }

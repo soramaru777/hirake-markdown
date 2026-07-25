@@ -152,6 +152,20 @@
                             Cursor="Hand"
                             ToolTip="文書指紋・類似検出 (Ctrl+Shift+R)" />
 
+                    <Button x:Name="StatsButton"
+                            Click="StatsButton_Click"
+                            Content="&#xE908;"
+                            FontFamily="Segoe MDL2 Assets"
+                            FontSize="14"
+                            Padding="8,4"
+                            Margin="4,2,0,2"
+                            VerticalAlignment="Center"
+                            BorderThickness="0"
+                            Background="Transparent"
+                            Foreground="{DynamicResource ChromeText}"
+                            Cursor="Hand"
+                            ToolTip="フォルダ統計 (Ctrl+Shift+T)" />
+
                     <Button x:Name="ExportPdfButton"
                             Click="ExportPdfButton_Click"
                             Content="&#xE8A5;"
