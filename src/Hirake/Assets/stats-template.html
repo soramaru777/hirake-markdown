@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="ja" data-theme="{{THEME}}">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="color-scheme" content="light dark">
+<title>{{TITLE}}</title>
+<style>
+  /* ---------------------------------------------------------
+   * Hirake - stats-template.html 用インラインスタイル
+   * フォルダ統計ダッシュボード専用。style.css は読み込まない。
+   * 配色は CSS カスタムプロパティで定義し、ライト/ダークは
+   * html[data-theme="dark"] で切替える（チャートも CSS 変数を参照）。
+   * --------------------------------------------------------- */
+  :root {
+    /* ---- ライトテーマ（既定） ---- */
+    --st-bg: #ffffff;
+    --st-text: #1f2328;
+    --st-text-muted: #59636e;
+    --st-border: #d1d9e0;
+    --st-card-bg: #f6f8fa;
+    --st-item-hover: #eef2f6;
+    --st-accent: #0969da;
+    --st-heat-empty: #ebedf0;
+    --st-heat-1: #9be9a8;
+    --st-heat-2: #40c463;
+    --st-heat-3: #30a14e;
+    --st-heat-4: #216e39;
+    --st-line: #0969da;
+    --st-line2: #d1683c;
+    --st-axis: #8b949e;
+  }
+
+  /* ---- ダークテーマ（GitHub Dark 風） ---- */
+  html[data-theme="dark"] {
+    --st-bg: #0d1117;
+    --st-text: #e6edf3;
+    --st-text-muted: #8b949e;
+    --st-border: #30363d;
+    --st-card-bg: #161b22;
+    --st-item-hover: #1f2630;
+    --st-accent: #58a6ff;
+    --st-heat-empty: #161b22;
+    --st-heat-1: #0e4429;
+    --st-heat-2: #006d32;
+    --st-heat-3: #26a641;
+    --st-heat-4: #39d353;
+    --st-line: #58a6ff;
+    --st-line2: #ff8a4c;
+    --st-axis: #8b949e;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background-color: var(--st-bg);
+    color: var(--st-text);
+  }
+
+  body {
+    font-family: -apple-system, "Segoe UI", "Yu Gothic UI", Meiryo, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  #st-root {
+    padding: 16px 20px 40px;
+    max-width: 1000px;
+  }
+
+  #st-header {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+
+  #st-header h1 {
+    margin: 0;
+    font-size: 18px;
+  }
+
+  #st-note {
+    color: var(--st-text-muted);
+    font-size: 12px;
+  }
+
+  h2 {
+    margin: 24px 0 8px;
+    font-size: 14px;
+    border-bottom: 1px solid var(--st-border);
+    padding-bottom: 4px;
+  }
+
+  /* ---------- サマリカード ---------- */
+
+  #st-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 12px;
+  }
+
+  .st-card {
+    min-width: 110px;
+    padding: 8px 14px;
+    border: 1px solid var(--st-border);
+    border-radius: 6px;
+    background: var(--st-card-bg);
+  }
+
+  .st-card .st-card-value {
+    font-size: 20px;
+    font-weight: 700;
+  }
+
+  .st-card .st-card-label {
+    color: var(--st-text-muted);
+    font-size: 12px;
+  }
+
+  /* ---------- チャート ---------- */
+
+  .st-chart-note {
+    color: var(--st-text-muted);
+    font-size: 12px;
+    margin: 4px 0;
+  }
+
+  #st-heatmap svg, .st-line svg {
+    display: block;
+  }
+
+  .st-heat-cell {
+    stroke: var(--st-border);
+    stroke-width: 0.5;
+  }
+
+  .st-axis-label {
+    fill: var(--st-axis);
+    font-size: 10px;
+  }
+
+  .st-line-path {
+    fill: none;
+    stroke: var(--st-line);
+    stroke-width: 2;
+  }
+
+  .st-line-dot {
+    fill: var(--st-line);
+  }
+
+  .st-empty {
+    color: var(--st-text-muted);
+    font-size: 13px;
+    margin: 8px 0;
+  }
+
+  /* ---------- ランキング ---------- */
+
+  .st-rank-row {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+
+  .st-rank-row:hover {
+    background: var(--st-item-hover);
+  }
+
+  .st-rank-row:hover .st-rank-name {
+    color: var(--st-accent);
+  }
+
+  .st-rank-value {
+    flex: none;
+    min-width: 96px;
+    text-align: right;
+    font-family: Consolas, monospace;
+    font-size: 12px;
+    color: var(--st-text-muted);
+  }
+
+  .st-rank-name {
+    font-weight: 600;
+  }
+
+  .st-rank-rel {
+    color: var(--st-text-muted);
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+</style>
+</head>
+<body>
+
+<div id="st-root">
+  <div id="st-header">
+    <h1 id="st-title"></h1>
+    <span id="st-note"></span>
+  </div>
+
+  <div id="st-summary"></div>
+
+  <h2>更新ヒートマップ（過去 365 日・最終更新日ベース）</h2>
+  <div id="st-heatmap"></div>
+
+  <h2>推移（開くたびに記録されます）</h2>
+  <div class="st-chart-note" id="st-history-note"></div>
+  <div class="st-line" id="st-chart-chars"></div>
+  <div class="st-line" id="st-chart-files"></div>
+
+  <h2>放置文書ランキング（最終更新が古い順）</h2>
+  <div id="st-stale"></div>
+
+  <h2>ボリュームランキング（文字数）</h2>
+  <div id="st-largest"></div>
+
+  <h2>未完了タスクの多い文書</h2>
+  <div id="st-taskheavy"></div>
+</div>
+
+<script>window.__statsData = {{DATA}};</script>
+<script src="https://assets.hirake/vendor/d3.v7.min.js"></script>
+<script src="https://assets.hirake/stats.js" defer></script>
+</body>
+</html>

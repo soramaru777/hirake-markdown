@@ -132,6 +132,9 @@ public partial class MainWindow : Window, IDocumentTabHost
             case FingerprintTab fingerprint:
                 root = fingerprint.RootFolder;
                 break;
+            case StatsTab stats:
+                root = stats.RootFolder;
+                break;
             case DocumentTab active:
                 try
                 {
@@ -196,6 +199,9 @@ public partial class MainWindow : Window, IDocumentTabHost
             case FingerprintTab fingerprint:
                 root = fingerprint.RootFolder;
                 break;
+            case StatsTab stats:
+                root = stats.RootFolder;
+                break;
             case DocumentTab active:
                 try
                 {
@@ -257,6 +263,9 @@ public partial class MainWindow : Window, IDocumentTabHost
             case StructureQueryTab structure:
                 root = structure.RootFolder;
                 break;
+            case StatsTab stats:
+                root = stats.RootFolder;
+                break;
             case DocumentTab active:
                 try
                 {
@@ -297,6 +306,70 @@ public partial class MainWindow : Window, IDocumentTabHost
     }
 
     private void FingerprintButton_Click(object sender, RoutedEventArgs e) => OpenFingerprintView();
+
+    // ---- フォルダ統計ダッシュボード -----------------------------------
+
+    /// <summary>
+    /// アクティブタブのファイルが属するフォルダを起点に統計ダッシュボードを開く。
+    /// スコープ決定は他の仮想タブと同じ規則。
+    /// 同一フォルダの統計タブが既にあればアクティブ化のみ行う。
+    /// </summary>
+    private void OpenStatsView()
+    {
+        string? root;
+        switch (TabList.SelectedItem)
+        {
+            case StatsTab:
+                return; // 既に統計ダッシュボードがアクティブ。
+            case GraphTab graph:
+                root = graph.RootFolder;
+                break;
+            case StructureQueryTab structure:
+                root = structure.RootFolder;
+                break;
+            case FingerprintTab fingerprint:
+                root = fingerprint.RootFolder;
+                break;
+            case DocumentTab active:
+                try
+                {
+                    root = Path.GetDirectoryName(active.FilePath);
+                }
+                catch
+                {
+                    root = null;
+                }
+                break;
+            default:
+                root = null;
+                break;
+        }
+        root ??= _currentRootFolder;
+
+        if (string.IsNullOrEmpty(root) || !Directory.Exists(root))
+        {
+            return;
+        }
+
+        string fullRoot = Path.GetFullPath(root);
+        var existing = Tabs.OfType<StatsTab>().FirstOrDefault(
+            t => string.Equals(t.RootFolder, fullRoot, StringComparison.OrdinalIgnoreCase));
+        if (existing != null)
+        {
+            TabList.SelectedItem = existing;
+            return;
+        }
+
+        var tab = new StatsTab(fullRoot, this, _assetsDirectory, _tempDirectory);
+        tab.WebView.Visibility = Visibility.Collapsed;
+        WebViewHost.Children.Add(tab.WebView);
+        Tabs.Add(tab);
+        TabList.SelectedItem = tab;
+
+        UpdateEmptyState();
+    }
+
+    private void StatsButton_Click(object sender, RoutedEventArgs e) => OpenStatsView();
 
     // ---- タブを閉じる -------------------------------------------------
 
@@ -618,6 +691,10 @@ public partial class MainWindow : Window, IDocumentTabHost
                     OpenFingerprintView();
                     e.Handled = true;
                     return;
+                case Key.T:
+                    OpenStatsView();
+                    e.Handled = true;
+                    return;
             }
         }
 
@@ -789,6 +866,8 @@ public partial class MainWindow : Window, IDocumentTabHost
     public void ShortcutToggleStructureView() => OpenStructureView();
 
     public void ShortcutToggleFingerprintView() => OpenFingerprintView();
+
+    public void ShortcutToggleStatsView() => OpenStatsView();
 
     /// <summary>あるタブでズームが変わったら、他の全タブへ同じ倍率を反映する。</summary>
     public void OnTabZoomChanged(DocumentTab source, double zoomFactor)

@@ -25,6 +25,7 @@
  *     { type:'shortcut', action:'toggleGraphView' }  Ctrl+G
  *     { type:'shortcut', action:'toggleStructureView' } Ctrl+Shift+S
  *     { type:'shortcut', action:'toggleFingerprintView' } Ctrl+Shift+R
+ *     { type:'shortcut', action:'toggleStatsView' } Ctrl+Shift+T
  *   ホスト→WebView 公開関数:
  *     window.__mdvSetTheme('light'|'dark')  テーマ切替（スクロールは動かさない）
  *     window.__mdvRestoreScroll(y)          スクロール位置の復元（Mermaid 描画後にも再適用）
@@ -1120,6 +1121,11 @@
       if (key === 'r') {
         event.preventDefault();
         postToHost({ type: 'shortcut', action: 'toggleFingerprintView' });
+        return;
+      }
+      if (key === 't') {
+        event.preventDefault();
+        postToHost({ type: 'shortcut', action: 'toggleStatsView' });
         return;
       }
       // 未対応の Ctrl+Shift+* はブラウザ標準に委ねる。
