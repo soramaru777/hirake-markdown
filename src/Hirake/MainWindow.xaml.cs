@@ -110,75 +110,16 @@ public partial class MainWindow : Window, IDocumentTabHost
         UpdateEmptyState();
     }
 
-    // ---- ナレッジグラフ・ビュー ---------------------------------------
+    // ---- ナレッジグラフ（キャンバスの全体俯瞰） -----------------------
 
     /// <summary>
-    /// アクティブタブのフォルダを起点にナレッジグラフ・ビューを開く。
-    /// 同一フォルダのグラフタブが既にあればアクティブ化のみ行う。
+    /// ナレッジグラフ＝キャンバスの全体俯瞰として開く（#32・R3 完成）。
+    /// 旧グラフビュー（GraphTab）は廃止し、キャンバスを遠景（fit-to-content）で
+    /// 開くことで置き換える。保存済みビューポートは使わない。
     /// </summary>
-    private void OpenGraphView()
-    {
-        // 仮想タブの FilePath はフォルダ自身のため GetDirectoryName すると親に化ける。
-        // アクティブタブの種別ごとにスコープを直接決める（_currentRootFolder は
-        // サイドバー追従で同様に親へずれることがあるため最後のフォールバックのみ）。
-        string? root;
-        switch (TabList.SelectedItem)
-        {
-            case GraphTab:
-                return; // 既にグラフビューがアクティブ。
-            case StructureQueryTab structure:
-                root = structure.RootFolder;
-                break;
-            case FingerprintTab fingerprint:
-                root = fingerprint.RootFolder;
-                break;
-            case StatsTab stats:
-                root = stats.RootFolder;
-                break;
-            case CanvasTab canvas:
-                root = canvas.RootFolder;
-                break;
-            case DocumentTab active:
-                try
-                {
-                    root = Path.GetDirectoryName(active.FilePath);
-                }
-                catch
-                {
-                    root = null;
-                }
-                break;
-            default:
-                root = null;
-                break;
-        }
-        root ??= _currentRootFolder;
-        if (string.IsNullOrEmpty(root) || !Directory.Exists(root))
-        {
-            return;
-        }
+    private void OpenCanvasOverview() => OpenCanvasView(overview: true);
 
-        // サブフォルダから開いても親フォルダ側のリンクが漏れないよう、
-        // ワークスペースルート（md を直接含む最上位フォルダ）を起点にする。
-        string fullRoot = LinkGraphService.FindWorkspaceRoot(root);
-        var existing = Tabs.OfType<GraphTab>().FirstOrDefault(
-            t => string.Equals(t.RootFolder, fullRoot, StringComparison.OrdinalIgnoreCase));
-        if (existing != null)
-        {
-            TabList.SelectedItem = existing;
-            return;
-        }
-
-        var tab = new GraphTab(fullRoot, this, _assetsDirectory, _tempDirectory);
-        tab.WebView.Visibility = Visibility.Collapsed;
-        WebViewHost.Children.Add(tab.WebView);
-        Tabs.Add(tab);
-        TabList.SelectedItem = tab;
-
-        UpdateEmptyState();
-    }
-
-    private void GraphButton_Click(object sender, RoutedEventArgs e) => OpenGraphView();
+    private void GraphButton_Click(object sender, RoutedEventArgs e) => OpenCanvasOverview();
 
     // ---- 構造クエリビュー ---------------------------------------------
 
@@ -189,16 +130,14 @@ public partial class MainWindow : Window, IDocumentTabHost
     /// </summary>
     private void OpenStructureView()
     {
-        // アクティブタブの種別ごとにスコープを直接決める（OpenGraphView と同じ理由で、
-        // 仮想タブでは RootFolder を引き継ぎ、_currentRootFolder は最後のフォールバックのみ）。
+        // 仮想タブの FilePath はフォルダ自身のため GetDirectoryName すると親に化ける。
+        // アクティブタブの種別ごとにスコープを直接決める（_currentRootFolder は
+        // サイドバー追従で親へずれることがあるため最後のフォールバックのみ）。
         string? root;
         switch (TabList.SelectedItem)
         {
             case StructureQueryTab:
                 return; // 既に構造クエリビューがアクティブ。
-            case GraphTab graph:
-                root = graph.RootFolder;
-                break;
             case FingerprintTab fingerprint:
                 root = fingerprint.RootFolder;
                 break;
@@ -263,9 +202,6 @@ public partial class MainWindow : Window, IDocumentTabHost
         {
             case FingerprintTab:
                 return; // 既に指紋ビューがアクティブ。
-            case GraphTab graph:
-                root = graph.RootFolder;
-                break;
             case StructureQueryTab structure:
                 root = structure.RootFolder;
                 break;
@@ -330,9 +266,6 @@ public partial class MainWindow : Window, IDocumentTabHost
         {
             case StatsTab:
                 return; // 既に統計ダッシュボードがアクティブ。
-            case GraphTab graph:
-                root = graph.RootFolder;
-                break;
             case StructureQueryTab structure:
                 root = structure.RootFolder;
                 break;
@@ -387,16 +320,21 @@ public partial class MainWindow : Window, IDocumentTabHost
     /// グラフビューと同じく FindWorkspaceRoot で親フォルダ側のリンクも含める。
     /// 同一ルートのキャンバスタブが既にあればアクティブ化のみ行う。
     /// </summary>
-    private void OpenCanvasView()
+    /// <param name="overview">
+    /// true のとき全体俯瞰（遠景）で開く。Ctrl+G / グラフボタン経由の呼び出しで、
+    /// 既にキャンバスが開いていればそのタブを俯瞰へズームアウトさせる。
+    /// </param>
+    private void OpenCanvasView(bool overview = false)
     {
         string? root;
         switch (TabList.SelectedItem)
         {
-            case CanvasTab:
+            case CanvasTab active:
+                if (overview)
+                {
+                    active.ShowOverview();
+                }
                 return; // 既にキャンバスがアクティブ。
-            case GraphTab graph:
-                root = graph.RootFolder;
-                break;
             case StructureQueryTab structure:
                 root = structure.RootFolder;
                 break;
@@ -433,10 +371,14 @@ public partial class MainWindow : Window, IDocumentTabHost
         if (existing != null)
         {
             TabList.SelectedItem = existing;
+            if (overview)
+            {
+                existing.ShowOverview();
+            }
             return;
         }
 
-        var tab = new CanvasTab(fullRoot, this, _assetsDirectory, _tempDirectory);
+        var tab = new CanvasTab(fullRoot, this, _assetsDirectory, _tempDirectory, overview);
         tab.WebView.Visibility = Visibility.Collapsed;
         WebViewHost.Children.Add(tab.WebView);
         Tabs.Add(tab);
@@ -797,7 +739,7 @@ public partial class MainWindow : Window, IDocumentTabHost
                 e.Handled = true;
                 break;
             case Key.G:
-                OpenGraphView();
+                OpenCanvasOverview();
                 e.Handled = true;
                 break;
             case Key.Tab:
@@ -941,7 +883,9 @@ public partial class MainWindow : Window, IDocumentTabHost
 
     public void ShortcutCycleTheme() => CycleTheme();
 
-    public void ShortcutToggleGraphView() => OpenGraphView();
+    // 旧グラフビュー廃止後も、各ビュー JS からの 'toggleGraphView' は
+    // キャンバス俯瞰へのエイリアスとして受け続ける（JS 側の転送は変更不要）。
+    public void ShortcutToggleGraphView() => OpenCanvasOverview();
 
     public void ShortcutToggleStructureView() => OpenStructureView();
 

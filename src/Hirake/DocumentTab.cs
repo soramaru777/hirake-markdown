@@ -42,6 +42,7 @@ public class DocumentTab : IDisposable
     private const string AssetsHost = "assets.hirake";
     private const string TempHost = "temp.hirake";
     private const string ThumbsHost = "thumbs.hirake";
+    private const string PreviewsHost = "previews.hirake";
 
     // doc 仮想ホストの命名規則（"doc.hirake" / "&lt;letter&gt;.doc.hirake"）は
     // MarkdownRenderer を唯一の真実源とし、そこから参照する（重複実装を避ける）。
@@ -129,6 +130,24 @@ public class DocumentTab : IDisposable
         catch
         {
             // ignore
+        }
+
+        // キャンバス近景プレビュー HTML の置場（#32）。
+        // iframe の src はこのホスト配下の不透明 ID ファイル名のみで、実パスは載せない。
+        // プレビューは文書本文そのものを含むため、必要とするタブ（CanvasTab）の
+        // WebView だけにマップし、通常文書タブからは参照できないようにする。
+        if (MapPreviewsHost)
+        {
+            try
+            {
+                Directory.CreateDirectory(CanvasLayoutStore.PreviewsDirectory);
+                core.SetVirtualHostNameToFolderMapping(
+                    PreviewsHost, CanvasLayoutStore.PreviewsDirectory, CoreWebView2HostResourceAccessKind.Allow);
+            }
+            catch
+            {
+                // ignore
+            }
         }
 
         // ドキュメント用: 各固定ドライブを "<ドライブ文字小文字>.doc.hirake" にマップし、
@@ -303,6 +322,12 @@ public class DocumentTab : IDisposable
 
     /// <summary>破棄済みか（派生タブが await 後の続行可否を判定するために使用）。</summary>
     protected bool IsDisposed => _disposed;
+
+    /// <summary>
+    /// previews.hirake（近景プレビュー HTML）をこのタブの WebView へマップするか。
+    /// 既定は false。プレビューは文書本文を含むため、必要な CanvasTab だけが true にする。
+    /// </summary>
+    protected virtual bool MapPreviewsHost => false;
 
     /// <summary>
     /// HTML を表示する。NavigateToString の約 2MB 制限を超える場合は
@@ -815,6 +840,14 @@ public class DocumentTab : IDisposable
     {
     }
 
+    /// <summary>
+    /// キャンバス近景プレビューの要求（{type:'canvasPreview', pid, theme}）のフック。
+    /// 既定は何もしない。CanvasTab がオーバーライドして HTML を供給する。
+    /// </summary>
+    protected virtual void OnCanvasPreviewMessage(System.Text.Json.JsonElement message)
+    {
+    }
+
     // ---- キャンバス用サムネイル ---------------------------------------
 
     private bool _thumbnailCaptured;
@@ -1045,6 +1078,13 @@ public class DocumentTab : IDisposable
             if (type == "canvasLayout")
             {
                 OnCanvasLayoutMessage(root);
+                return;
+            }
+
+            // キャンバス近景プレビューの要求（CanvasTab がオーバーライドで処理）。
+            if (type == "canvasPreview")
+            {
+                OnCanvasPreviewMessage(root);
                 return;
             }
 

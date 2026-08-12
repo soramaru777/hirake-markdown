@@ -122,7 +122,7 @@
                             Background="Transparent"
                             Foreground="{DynamicResource ChromeText}"
                             Cursor="Hand"
-                            ToolTip="ナレッジグラフ (Ctrl+G)" />
+                            ToolTip="ナレッジグラフ = キャンバスの全体俯瞰 (Ctrl+G)" />
 
                     <Button x:Name="CanvasButton"
                             Click="CanvasButton_Click"

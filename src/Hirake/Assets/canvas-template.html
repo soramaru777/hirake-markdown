@@ -217,6 +217,39 @@
     text-overflow: ellipsis;
   }
 
+  /* ---------- 近景: インラインプレビュー（sandbox iframe） ---------- */
+
+  /* プレビューはカードより大きくして本文が読める幅を確保する
+     （サイズは canvas.js の PREVIEW_W / PREVIEW_H と一致させること）。 */
+  body.mode-card .cv-card.is-preview {
+    display: flex;
+    flex-direction: column;
+    width: 420px;
+    height: 320px;
+    cursor: default;
+  }
+
+  .cv-card.is-preview .cv-card-thumb,
+  .cv-card.is-preview .cv-card-thumb-empty {
+    display: none;
+  }
+
+  .cv-card-preview {
+    flex: 1 1 auto;
+    width: 100%;
+    min-height: 0;
+    border: 0;
+    display: block;
+    background: var(--cv-card-bg);
+  }
+
+  /* タイトル部分がドラッグ・ダブルクリックの掴みどころ（iframe はイベントを通さない）。 */
+  .cv-card.is-preview .cv-card-name {
+    flex: 0 0 auto;
+    border-top: 1px solid var(--cv-card-border);
+    cursor: grab;
+  }
+
   /* ---------- 情報バー ---------- */
 
   #cv-info {
@@ -255,6 +288,15 @@
     pointer-events: none;
   }
 
+  /* プレビューの制約説明は近景のときだけ出す。 */
+  #cv-hint-preview {
+    display: none;
+  }
+
+  body.mode-preview #cv-hint-preview {
+    display: inline;
+  }
+
   /* ---------- 空状態 ---------- */
 
   #cv-empty {
@@ -282,7 +324,7 @@
   <span class="cv-info-note"></span>
 </div>
 
-<div id="cv-hint">ホイール: ズーム（拡大でカード表示） / ドラッグ: パン・配置（配置はピン留め） / 右クリック: ピン解除 / ダブルクリック: 開く</div>
+<div id="cv-hint">ホイール: ズーム（拡大でカード → さらに拡大でプレビュー） / ドラッグ: パン・配置（配置はピン留め） / 右クリック: ピン解除 / ダブルクリック: 開く<span id="cv-hint-preview">　｜　プレビュー中の操作は<strong>タイトル部分</strong>で（ダブルクリック: 開く / 右クリック: ピン解除 / ドラッグ: 配置）。プレビューは静的表示（Mermaid・数式・ハイライトなし）</span></div>
 
 <div id="cv-empty">このフォルダに Markdown ファイルが見つかりません</div>
 
