@@ -162,17 +162,25 @@ public class DocumentTab : IDisposable
         core.NewWindowRequested += OnNewWindowRequested;
         core.WebMessageReceived += OnWebMessageReceived;
 
-        // ズーム倍率の復元と変更監視（初期設定後に購読して初回通知を避ける）。
+        // ズーム倍率の復元と変更監視。
+        // 復元でズーム倍率バッジを出さないための抑止（ArmHostZoom）は「通知が
+        // 必ずハンドラへ届いて消費される」ことが前提なので、購読を先に済ませる。
+        // こうすると通知が同期・非同期のどちらで届いても ConsumeHostZoom が
+        // 抑止を使い切り、抑止が残留して後のユーザー操作を飲み込むことがない。
+        WebView.ZoomFactorChanged += OnZoomFactorChanged;
+        _zoomHandlerAttached = true;
+
         try
         {
-            WebView.ZoomFactor = SettingsStore.Instance.ZoomFactor;
+            double restored = SettingsStore.Instance.ZoomFactor;
+            ArmHostZoom(restored);
+            WebView.ZoomFactor = restored;
         }
         catch
         {
-            // ズーム適用失敗は無視する。
+            // ズーム適用失敗は無視する。通知が来ないため抑止は解除しておく。
+            _hostAppliedZoom = double.NaN;
         }
-        WebView.ZoomFactorChanged += OnZoomFactorChanged;
-        _zoomHandlerAttached = true;
 
         // 初期化時点の実効テーマで背景色を確定する。
         SetDefaultBackground(_effectiveTheme);
@@ -512,17 +520,57 @@ public class DocumentTab : IDisposable
 
     // ---- ズーム -------------------------------------------------------
 
+    // ホスト側が設定した倍率（起動時の復元・他タブからの同期）。
+    // 変更通知が同期で届くか非同期で届くかは WebView2 ラッパーの実装依存のため、
+    // 「購読前に代入したから発火しない」ことに頼らず、値でも判定してバッジを抑止する。
+    // 1 回の代入につき 1 回だけ抑止する（使い切りで NaN に戻す）ので、ユーザーが
+    // 同じ倍率へ戻す操作をした場合はきちんとバッジが出る。
+    private double _hostAppliedZoom = double.NaN;
+
+    private void ArmHostZoom(double zoomFactor)
+    {
+        // 値が変わらない代入では ZoomFactorChanged が発生せず、arm が使われずに
+        // 残留する。そのまま残すと、後でユーザーがその倍率へ戻したときに
+        // ホスト由来と誤判定してバッジを飲み込むため、その場合は arm しない。
+        double current;
+        try
+        {
+            current = WebView.ZoomFactor;
+        }
+        catch
+        {
+            current = double.NaN;
+        }
+
+        _hostAppliedZoom = !double.IsNaN(current) && Math.Abs(current - zoomFactor) <= 0.0005
+            ? double.NaN
+            : zoomFactor;
+    }
+
+    /// <summary>この変更通知がホスト由来か（＝バッジを出さない）を判定し、抑止を使い切る。</summary>
+    private bool ConsumeHostZoom(double zoom)
+    {
+        if (double.IsNaN(_hostAppliedZoom) || Math.Abs(zoom - _hostAppliedZoom) > 0.0005)
+        {
+            return false;
+        }
+        _hostAppliedZoom = double.NaN;
+        return true;
+    }
+
     /// <summary>他タブからの通知でズーム倍率を反映する（ホストへ再通知しない）。</summary>
     public void ApplyZoom(double zoomFactor)
     {
         _suppressZoomNotify = true;
         try
         {
+            ArmHostZoom(zoomFactor);
             WebView.ZoomFactor = zoomFactor;
         }
         catch
         {
-            // ズーム適用失敗は無視する。
+            // ズーム適用失敗は無視する。通知が来ないため抑止は解除しておく。
+            _hostAppliedZoom = double.NaN;
         }
         finally
         {
@@ -535,11 +583,36 @@ public class DocumentTab : IDisposable
         double zoom = WebView.ZoomFactor;
         SettingsStore.Instance.ZoomFactor = zoom;
 
-        if (_suppressZoomNotify)
+        // 起動時の復元・他タブ同期による変更はバッジを出さず、再伝播もしない。
+        // 通知が非同期に届くと _suppressZoomNotify は既に解除されているため、
+        // 値による判定（ConsumeHostZoom）でも同じように打ち切る。
+        if (ConsumeHostZoom(zoom) || _suppressZoomNotify)
         {
             return;
         }
+
         _host.OnTabZoomChanged(this, zoom);
+        ShowZoomBadge(zoom);
+    }
+
+    /// <summary>
+    /// 現在のズーム倍率を整数パーセントのバッジとしてページ右下へ一時表示する。
+    /// viewer.js を読まないタブ（キャンバス等）では関数が未定義のため空振りする。
+    /// </summary>
+    private void ShowZoomBadge(double zoom)
+    {
+        var core = WebView.CoreWebView2;
+        if (core == null)
+        {
+            return;
+        }
+
+        int percent = (int)Math.Round(zoom * 100);
+        _ = core.ExecuteScriptAsync(
+            "(function(){try{if(typeof window.__mdvShowZoomBadge==='function'){"
+            + "window.__mdvShowZoomBadge("
+            + percent.ToString(CultureInfo.InvariantCulture)
+            + ");}}catch(e){}})();");
     }
 
     // ---- 自動リロード -------------------------------------------------

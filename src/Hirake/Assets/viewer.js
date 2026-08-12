@@ -33,6 +33,7 @@
  *     window.__mdvPrint()                   印刷（UI 退避つき）
  *     window.__mdvSetBacklinks([{path,name}])         このページを参照する文書一覧
  *     window.__mdvSetRecommendations([{path,name,score}])  次に読む（関連文書レコメンド）
+ *     window.__mdvShowZoomBadge(percent)    ズーム倍率バッジの一時表示（右下・自動で消える）
  *
  * 注意:
  *   - vendor（hljs / mermaid / KaTeX）が読み込めていなくても全体が死なないよう、
@@ -1067,6 +1068,118 @@
 
   // ホスト（WPF 側の印刷ボタン / Ctrl+P）から呼び出すための公開関数。
   window.__mdvPrint = printDocument;
+
+  /* ==========================================================
+   * ズーム倍率バッジ
+   * ========================================================== */
+
+  // WebView2（WPF）は HWND ベースの子ウィンドウで、WPF 要素を上に重ねられない
+  // （airspace 制約）。そのため倍率表示はページ内の DOM として描画する。
+  // ホストはユーザー操作由来のズーム変更時にだけ呼ぶ（起動時の倍率復元や
+  // 他タブへの伝播では呼ばれない）ので、ここでは表示に専念する。
+
+  var zoomBadgeEl = null;
+  var zoomBadgeTimer = null;
+  var zoomBadgeHideAt = 0;
+
+  // バッジの表示時間（ms）。操作が続く間はタイマーを張り直す。
+  var ZOOM_BADGE_DURATION = 1500;
+
+  function ensureZoomBadge() {
+    if (zoomBadgeEl && zoomBadgeEl.isConnected) {
+      return zoomBadgeEl;
+    }
+    // body 未準備のタイミングで呼ばれても壊さない（そのズーム操作では出さない）。
+    if (!document.body) {
+      return null;
+    }
+    var el = document.createElement('div');
+    el.className = 'mdv-zoom-badge';
+    // 読み上げ対象にしない（.mdv-meta と同じ扱い）。
+    el.setAttribute('aria-hidden', 'true');
+    document.body.appendChild(el);
+    zoomBadgeEl = el;
+    return el;
+  }
+
+  function hideZoomBadge() {
+    if (zoomBadgeTimer !== null) {
+      clearTimeout(zoomBadgeTimer);
+      zoomBadgeTimer = null;
+    }
+    zoomBadgeHideAt = 0;
+    if (zoomBadgeEl) {
+      zoomBadgeEl.classList.remove('is-visible');
+    }
+  }
+
+  // 右下は .mdv-meta（文書メタ情報チップ）が占有しているため、その直上へ積む。
+  // メタバーはウィンドウ幅で折り返して高さが変わるので、表示のたびに測り直す。
+  function zoomBadgeBottom() {
+    try {
+      var meta = document.querySelector('.mdv-meta');
+      if (meta) {
+        var rect = meta.getBoundingClientRect();
+        if (rect && rect.height > 0) {
+          return Math.round(rect.height) + 20; // メタバー高さ + 下余白 12 + 間隔 8
+        }
+      }
+    } catch (err) {
+      // 測定できない場合は既定位置へ。
+    }
+    return 12;
+  }
+
+  function showZoomBadge(percent) {
+    var value = Number(percent);
+    if (!isFinite(value)) return;
+
+    var el = ensureZoomBadge();
+    if (!el) return;
+
+    el.textContent = Math.round(value) + '%';
+    el.style.bottom = zoomBadgeBottom() + 'px';
+
+    // 連続操作では中身と位置だけ差し替え、再表示アニメーションを起こさない
+    // （倍率を刻むたびに点滅して見えるのを防ぐ）。
+    el.classList.add('is-visible');
+
+    zoomBadgeHideAt = Date.now() + ZOOM_BADGE_DURATION;
+    if (zoomBadgeTimer !== null) {
+      clearTimeout(zoomBadgeTimer);
+    }
+    zoomBadgeTimer = setTimeout(hideZoomBadge, ZOOM_BADGE_DURATION);
+  }
+
+  // タブ切替（WebView が Collapsed）中は Chromium がタイマーを抑制することがあり、
+  // 戻ってきたときに古い倍率が残って見える。再表示時に期限を検査して片付ける。
+  function checkZoomBadgeExpiry() {
+    if (!zoomBadgeHideAt) return;
+    var remaining = zoomBadgeHideAt - Date.now();
+    if (remaining <= 0) {
+      hideZoomBadge();
+      return;
+    }
+    // 期限前に戻ってきた場合は残り時間で張り直す。
+    if (zoomBadgeTimer !== null) {
+      clearTimeout(zoomBadgeTimer);
+    }
+    zoomBadgeTimer = setTimeout(hideZoomBadge, remaining);
+  }
+
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) {
+      safeRun(checkZoomBadgeExpiry);
+    }
+  });
+  window.addEventListener('pageshow', function () {
+    safeRun(checkZoomBadgeExpiry);
+  });
+  window.addEventListener('focus', function () {
+    safeRun(checkZoomBadgeExpiry);
+  });
+
+  window.__mdvShowZoomBadge = showZoomBadge;
 
   /* ==========================================================
    * ショートカット転送
