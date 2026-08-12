@@ -86,6 +86,22 @@ Set-ItemProperty -Path "$progIdKey\shell\open\command" -Name '(default)' -Value 
 
 Write-Host "ProgId '$progId' を登録しました。"
 
+# 1a. URL プロトコル 'hirake' の登録（hirake://open?path=... のディープリンク用）
+#     'URL Protocol' は値が空文字のまま「プロパティが存在すること」に意味がある。
+$schemeKey = 'HKCU:\Software\Classes\hirake'
+
+New-Item -Path $schemeKey -Force | Out-Null
+Set-ItemProperty -Path $schemeKey -Name '(default)' -Value 'URL:Hirake Protocol'
+New-ItemProperty -Path $schemeKey -Name 'URL Protocol' -Value '' -PropertyType String -Force | Out-Null
+
+New-Item -Path "$schemeKey\DefaultIcon" -Force | Out-Null
+Set-ItemProperty -Path "$schemeKey\DefaultIcon" -Name '(default)' -Value "$resolvedExePath,0"
+
+New-Item -Path "$schemeKey\shell\open\command" -Force | Out-Null
+Set-ItemProperty -Path "$schemeKey\shell\open\command" -Name '(default)' -Value $openCommand
+
+Write-Host "URL プロトコル 'hirake://' を登録しました。"
+
 # 2. .md / .markdown の OpenWithProgIds に追加
 foreach ($ext in @('.md', '.markdown')) {
     $extKey = "HKCU:\Software\Classes\$ext"

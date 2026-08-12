@@ -81,6 +81,12 @@ public class DocumentTab : IDisposable
     public string FilePath { get; }
     public string FileName { get; protected set; }
 
+    /// <summary>
+    /// hirake:// のディープリンクを作れるタブか（実ファイルを持つ Markdown タブのみ）。
+    /// キャンバス・構造クエリ等の仮想タブは FilePath がフォルダなので false になる。
+    /// </summary>
+    public bool SupportsDeepLink { get; }
+
     public DocumentTab(string filePath, IDocumentTabHost host, string assetsDirectory, string tempDirectory)
     {
         FilePath = Path.GetFullPath(filePath);
@@ -89,6 +95,18 @@ public class DocumentTab : IDisposable
         _assetsDirectory = assetsDirectory;
         _tempDirectory = tempDirectory;
         _driveRoot = Path.GetPathRoot(FilePath) ?? string.Empty;
+
+        try
+        {
+            string extension = Path.GetExtension(FilePath);
+            SupportsDeepLink = File.Exists(FilePath)
+                && (extension.Equals(".md", StringComparison.OrdinalIgnoreCase)
+                    || extension.Equals(".markdown", StringComparison.OrdinalIgnoreCase));
+        }
+        catch
+        {
+            SupportsDeepLink = false;
+        }
 
         _effectiveTheme = SettingsStore.GetEffectiveTheme(SettingsStore.Instance.Theme);
 
@@ -1043,6 +1061,46 @@ public class DocumentTab : IDisposable
         catch
         {
             // ignore
+        }
+    }
+
+    /// <summary>
+    /// 現在の表示位置に対応するソース行（1 始まり）を取得する。
+    /// 取得できない場合（未初期化・ソースマップなし等）は null。
+    /// 「この位置へのリンクをコピー」（hirake:// ディープリンク）で使う。
+    /// </summary>
+    public async Task<int?> GetCurrentSourceLineAsync()
+    {
+        var core = WebView.CoreWebView2;
+        if (core == null)
+        {
+            return null;
+        }
+
+        try
+        {
+            // __mdvGetScrollState は {y, line, offset} を返す（スクロール復元と同じ経路）。
+            string raw = await core.ExecuteScriptAsync(
+                "(function(){try{if(typeof window.__mdvGetScrollState==='function'){"
+                + "var s=window.__mdvGetScrollState();"
+                + "if(s&&typeof s.line==='number'){return s.line;}}}catch(e){}return null;})()")
+                .ConfigureAwait(true);
+
+            if (string.IsNullOrEmpty(raw) || raw == "null")
+            {
+                return null;
+            }
+            if (!double.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out double value))
+            {
+                return null;
+            }
+
+            int line = (int)Math.Round(value);
+            return line >= 1 ? line : null;
+        }
+        catch
+        {
+            return null;
         }
     }
 

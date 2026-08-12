@@ -64,10 +64,7 @@ public partial class App : Application
         if (paths.Count > 0)
         {
             // 引数がある場合は前回セッションを復元せず、指定ファイルのみ開く（既存動作）。
-            foreach (var path in paths)
-            {
-                _mainWindow.OpenFile(path);
-            }
+            _ = OpenAllAsync(_mainWindow, paths);
         }
         else
         {
@@ -85,13 +82,68 @@ public partial class App : Application
                 return;
             }
 
-            foreach (var path in paths)
-            {
-                _mainWindow.OpenFile(path);
-            }
-
-            _mainWindow.BringToFront();
+            // 送信側（別プロセス）を信用せず、受信側でも必ず再検証する。
+            _ = OpenAllAsync(_mainWindow, paths);
         });
+    }
+
+    /// <summary>
+    /// 入力（ファイルパス または hirake:// URI）を順に開き、1 件でも受理したら
+    /// ウィンドウを前面化する。1 件も受理しなければ前面化もしない
+    /// （不正 URI は完全に無反応にする）。
+    /// </summary>
+    private static async Task OpenAllAsync(MainWindow window, IReadOnlyList<string> values)
+    {
+        bool opened = false;
+        foreach (string value in values)
+        {
+            try
+            {
+                opened |= await OpenPathOrUriAsync(window, value).ConfigureAwait(true);
+            }
+            catch
+            {
+                // 1 件の失敗で残りを止めない。
+            }
+        }
+
+        if (opened)
+        {
+            window.BringToFront();
+        }
+    }
+
+    /// <summary>
+    /// 1 件の入力（ファイルパス または hirake:// URI）を開く。受理したら true。
+    /// URI は <see cref="HirakeUri.TryParse"/> で検証し、落ちたら黙って無視する。
+    /// </summary>
+    private static async Task<bool> OpenPathOrUriAsync(MainWindow window, string value)
+    {
+        if (!HirakeUri.IsHirakeUri(value))
+        {
+            window.OpenFile(value);
+            return true;
+        }
+
+        if (!HirakeUri.TryParse(value, out HirakeOpenRequest? request) || request == null)
+        {
+            return false; // 不正な URI は無反応（ダイアログも出さない）。
+        }
+
+        // heading は line より優先する。解決できなければ line にフォールバックする。
+        // 解析は外部から繰り返し叩かれ得るため、UI スレッドを止めないよう別スレッドで行う。
+        int? line = request.Line;
+        if (request.Heading != null)
+        {
+            string path = request.Path;
+            string heading = request.Heading;
+            int? resolved = await Task.Run(() => HirakeUri.FindHeadingLine(path, heading))
+                .ConfigureAwait(true);
+            line = resolved ?? line;
+        }
+
+        window.OpenFile(request.Path, line);
+        return true;
     }
 
     private static List<string> NormalizeArgs(string[] args)
@@ -101,6 +153,14 @@ public partial class App : Application
         {
             if (string.IsNullOrWhiteSpace(arg))
             {
+                continue;
+            }
+
+            // hirake:// URI は Path.GetFullPath に通すと潰れるため、そのまま通す
+            // （検証は OpenPathOrUri → HirakeUri.TryParse で行う）。
+            if (HirakeUri.IsHirakeUri(arg))
+            {
+                result.Add(arg.Trim());
                 continue;
             }
 

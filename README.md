@@ -75,6 +75,7 @@ dotnet publish src/Hirake -c Release -r win-x64 --self-contained false -o publis
 - `Hirake.md` という ProgId を HKCU に登録
 - `.md` / `.markdown` の「プログラムから開く」候補に Hirake を追加
 - `.md` の既定プログラムが未設定の場合のみ Hirake を既定に設定（既に別アプリが既定になっている場合は上書きしません）
+- `hirake://` の URL プロトコルを登録（下記のディープリンク用）
 
 > **注意**: Windows 11 では初回のみ、`.md` ファイルを右クリック →「プログラムから開く」→「別のプログラムを選択」から Hirake を選び、「常にこのアプリを使う」にチェックを入れる操作が必要な場合があります。
 
@@ -86,7 +87,33 @@ dotnet publish src/Hirake -c Release -r win-x64 --self-contained false -o publis
 .\scripts\unregister.ps1
 ```
 
-register.ps1 が作成した ProgId・OpenWithProgIds のエントリを削除します。`.md` の既定プログラムは、Hirake 自身が設定した場合のみ削除され、他アプリが既定になっている場合は変更しません。
+register.ps1 が作成した ProgId・OpenWithProgIds・`hirake://` プロトコルのエントリを削除します。`.md` の既定プログラムは、Hirake 自身が設定した場合のみ削除され、他アプリが既定になっている場合は変更しません。
+
+## `hirake://` ディープリンク
+
+ブラウザ・チャット・タスク管理ツール・エディタなど他アプリから、**特定文書の特定位置**へ直接リンクできます（`scripts/register.ps1` での登録が必要）。
+
+```
+hirake://open?path=<URLエンコードした絶対パス>[&line=<1始まりの行番号>][&heading=<URLエンコードした見出しテキスト>]
+```
+
+| パラメータ | 説明 |
+|---|---|
+| `path` | 必須。ローカルの絶対パス。拡張子は `.md` / `.markdown` のみ |
+| `line` | 任意。1 始まりの行番号 |
+| `heading` | 任意。**見出しテキストそのもの**（`概要` など）。指定すると `line` より優先されます |
+
+例:
+
+```powershell
+Start-Process "hirake://open?path=C%3A%5Cdocs%5Csample.md&heading=%E6%A6%82%E8%A6%81"
+Start-Process "hirake://open?path=C%3A%5Cdocs%5Csample.md&line=42"
+```
+
+- Hirake が起動していなければ起動して開き、起動済みなら**既存ウィンドウの新規タブ**で開いて前面化します。同じファイルが既に開いていればそのタブへジャンプします
+- リンクは**タブを右クリック →「この位置へのリンクをコピー」**でも作れます（現在のスクロール位置が `line` に入ります）
+- `heading` に見出し id（`section-1` 等）ではなく見出しテキストを使うのは、日本語見出しの id が自動採番になり人間が書けないためです
+- 安全のため、UNC・ネットワークドライブのパス、`.md` / `.markdown` 以外の拡張子、存在しないファイル、未知の verb は**黙って無視**します（行うのは「Markdown をタブで開く」ことだけです）
 
 ## キーボードショートカット
 

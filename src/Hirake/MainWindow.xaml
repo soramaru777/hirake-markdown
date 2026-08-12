@@ -85,6 +85,14 @@
                     <StackPanel Orientation="Horizontal"
                                 Margin="8,4,4,4"
                                 ToolTip="{Binding FilePath}">
+                        <StackPanel.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="この位置へのリンクをコピー"
+                                          Click="CopyDeepLink_Click"
+                                          Tag="{Binding}"
+                                          IsEnabled="{Binding SupportsDeepLink}" />
+                            </ContextMenu>
+                        </StackPanel.ContextMenu>
                         <TextBlock Text="{Binding FileName}"
                                    VerticalAlignment="Center"
                                    MaxWidth="240"
