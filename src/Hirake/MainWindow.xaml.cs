@@ -482,6 +482,42 @@ public partial class MainWindow : Window, IDocumentTabHost
         }
     }
 
+    /// <summary>
+    /// 現在の表示位置を指す hirake:// リンクをクリップボードへコピーする。
+    /// 行が取れない場合はファイルを開くだけの URI にする（コピー自体は成功させる）。
+    /// </summary>
+    private async void CopyDeepLink_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement fe || fe.Tag is not DocumentTab tab)
+        {
+            return;
+        }
+        if (!tab.SupportsDeepLink)
+        {
+            return; // 仮想タブ（実ファイルなし）。メニューは無効化済みだが念のため。
+        }
+
+        int? line = null;
+        try
+        {
+            line = await tab.GetCurrentSourceLineAsync().ConfigureAwait(true);
+        }
+        catch
+        {
+            // 行が取れなくてもファイル単位のリンクは作れる。
+        }
+
+        string uri = HirakeUri.BuildOpenUri(tab.FilePath, line);
+        try
+        {
+            Clipboard.SetText(uri);
+        }
+        catch
+        {
+            // 他プロセスがクリップボードを掴んでいる場合など。通知は出さない。
+        }
+    }
+
     private void PrintButton_Click(object sender, RoutedEventArgs e)
     {
         PrintActiveTab();

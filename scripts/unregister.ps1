@@ -64,7 +64,17 @@ if (Test-Path -LiteralPath $progIdKey) {
     Write-Host "ProgId '$progId' は登録されていませんでした。"
 }
 
+# 3a. URL プロトコル 'hirake' を削除（Hirake 専用のキーなので丸ごと消してよい）
+$schemeKey = 'HKCU:\Software\Classes\hirake'
+if (Test-Path -LiteralPath $schemeKey) {
+    Remove-Item -Path $schemeKey -Recurse -Force
+    Write-Host "URL プロトコル 'hirake://' を削除しました。"
+} else {
+    Write-Host "URL プロトコル 'hirake://' は登録されていませんでした。"
+}
+
 # 4. エクスプローラーへの反映通知
+#    （SHChangeNotify はファイル関連付け向けの通知。URL プロトコルには不要。）
 Send-ShellChangeNotification
 
 Write-Host ''
