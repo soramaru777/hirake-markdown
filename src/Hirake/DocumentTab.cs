@@ -421,7 +421,16 @@ public class DocumentTab : IDisposable
         core.ShowPrintUI(CoreWebView2PrintDialogKind.Browser);
     }
 
-    /// <summary>現在のページを PDF ファイルへ書き出す。成功で true。</summary>
+    // PDF の縮小拡大率（CoreWebView2PrintSettings.ScaleFactor）の有効範囲。
+    // 範囲外を代入すると ArgumentException になるため、必ずこの範囲へ丸める。
+    private const double MinPrintScale = 0.1;
+    private const double MaxPrintScale = 2.0;
+
+    /// <summary>
+    /// 現在のページを PDF ファイルへ書き出す。成功で true。
+    /// 画面のズーム倍率をそのまま出力倍率（ScaleFactor）として適用する
+    /// （Chromium の印刷レイアウトは既定ではズームを反映しないため明示的に渡す）。
+    /// </summary>
     public async Task<bool> ExportPdfAsync(string path)
     {
         var core = WebView.CoreWebView2;
@@ -432,6 +441,33 @@ public class DocumentTab : IDisposable
 
         try
         {
+            // 画面ズーム倍率を PDF の縮小拡大率として使う。Chromium のズームは
+            // 2.0 超も設定できるため、有効範囲へクランプしてから渡す。
+            CoreWebView2PrintSettings? settings = null;
+            try
+            {
+                settings = core.Environment.CreatePrintSettings();
+                settings.ScaleFactor = Math.Clamp(WebView.ZoomFactor, MinPrintScale, MaxPrintScale);
+            }
+            catch
+            {
+                // 印刷設定を作れない場合は既定倍率で出力する（PDF 出力自体は継続）。
+                settings = null;
+            }
+
+            if (settings != null)
+            {
+                try
+                {
+                    return await core.PrintToPdfAsync(path, settings).ConfigureAwait(true);
+                }
+                catch
+                {
+                    // ランタイムがカスタム印刷設定を受け付けない場合でも、
+                    // 従来（既定設定）の書き出しまで失敗させない。
+                }
+            }
+
             return await core.PrintToPdfAsync(path, null).ConfigureAwait(true);
         }
         catch
