@@ -2,15 +2,16 @@
  * Hirake - canvas.js
  *
  * 無限キャンバス・モード（ADR-0001 案B: 単一 WebView2 の HTML キャンバス方式）。
- * graph.js の d3-zoom / d3-force / ピン留め資産を基礎に、セマンティックズームを追加する:
- *   - 遠景（k < CARD_THRESHOLD）: ノード + エッジ（グラフビュー相当）
+ * d3-zoom / d3-force / ピン留めを基礎に、セマンティックズームを提供する:
+ *   - 遠景（k < CARD_THRESHOLD）: ノード + エッジ（旧グラフビュー相当・Ctrl+G の着地点）
  *   - 中間（k >= CARD_THRESHOLD）: カード（ファイル名 + サムネイル）。エッジは薄く継続
- *   - 近景 iframe は 3-2 で追加予定（本段階ではダブルクリックで通常タブへ）
+ *   - 近景（k >= PREVIEW_THRESHOLD）: 中央に近い最大 MAX_PREVIEWS 枚が実文書の
+ *     インラインプレビュー（sandbox iframe）。遠ざかったら即破棄しカードへ戻す
  *
  * データ（ホストが canvas-template.html の {{DATA}} に埋め込む）:
  *   window.__canvasData = {
- *     root, folderLabel, truncated,
- *     nodes: [{ id(絶対パス), rel(相対パス・保存キー), label, degree,
+ *     root, folderLabel, truncated, overview,
+ *     nodes: [{ id(絶対パス), rel(相対パス・保存キー), pid(不透明 ID), label, degree,
  *               thumb(ファイル名?クエリ or null), x?, y?, pinned }],
  *     edges: [{ source, target }],
  *     view: { x, y, k } | null
@@ -21,9 +22,19 @@
  *     { type:'openFile', path:<string> }                ダブルクリックで通常タブへ
  *     { type:'canvasLayout', layout:{ Version, Files:{rel:{X,Y,Pinned}}, View:{X,Y,K} } }
  *                                                       配置・ビューポートの保存（デバウンス）
+ *     { type:'canvasPreview', pid:<string>, theme:'light'|'dark', token:<string> }
+ *                                                       近景プレビュー HTML の要求
+ *                                                       （token は応答照合用。ホストは解釈せず返すだけ）
  *     { type:'shortcut', action:... }                   viewer.js と同じショートカット転送
  *   ホスト→WebView 公開関数:
  *     window.__mdvSetTheme('light'|'dark')  テーマ切替（配色は CSS 変数追従）
+ *     window.__cvSetPreview(pid, url, token) 要求したプレビュー HTML の URL 通知
+ *     window.__cvFitToContent()             全体俯瞰（遠景）へズームアウト（Ctrl+G）
+ *
+ * 信頼境界:
+ *   iframe の src はホストが払い出す previews.hirake の不透明ファイル名のみで、
+ *   実ファイルパスは JS 側に存在しない。iframe は allow-scripts なしの sandbox で
+ *   埋め込むため、プレビュー内のスクリプトは実行されない（viewer.js も動かない）。
  *
  * DOM 仮想化（ADR-0001 成功条件 2）:
  *   カード DOM はビューポート内（+マージン）のノード分だけ生成し、
@@ -61,6 +72,20 @@
   var CARD_H = 130;
   var VIEW_MARGIN = 200; // カード仮想化のビューポートマージン（世界座標）
 
+  // 近景（インラインプレビュー）へ切り替えるズーム率と、プレビューカードのサイズ。
+  // iframe は重いので枚数を厳しく絞り、ビューポート中心に近いものだけを生かす。
+  var PREVIEW_THRESHOLD = 2.5;
+  var MAX_PREVIEWS = 3;
+  var PREVIEW_W = 420;
+  var PREVIEW_H = 320;
+
+  // テーマ切替時にキャンバス本体へ通知するフック（buildCanvas が差し込む）。
+  var onThemeChanged = null;
+
+  function currentThemeName() {
+    return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+  }
+
   /* ==========================================================
    * 情報バー・テーマ
    * ========================================================== */
@@ -81,6 +106,10 @@
   function setTheme(theme) {
     document.documentElement.setAttribute(
       'data-theme', theme === 'dark' ? 'dark' : 'light');
+    // プレビュー HTML はテーマ別に生成されるため、切替後は作り直す。
+    if (typeof onThemeChanged === 'function') {
+      safeRun(onThemeChanged);
+    }
   }
 
   window.__mdvSetTheme = setTheme;
@@ -177,11 +206,15 @@
     }
 
     function updateMode() {
-      var card = currentTransform.k >= CARD_THRESHOLD;
+      var k = currentTransform.k;
+      var card = k >= CARD_THRESHOLD;
       document.body.classList.toggle('mode-card', card);
+      document.body.classList.toggle('mode-preview', k >= PREVIEW_THRESHOLD);
       if (card) {
         refreshCards();
       }
+      // 近景を抜けた場合の破棄もここで行うため、カードモード外でも必ず呼ぶ。
+      refreshPreviews();
     }
 
     /* ---------- 力学モデル（R4: 未ピンのみ作用） ---------- */
@@ -278,11 +311,15 @@
 
       Object.keys(cardById).forEach(function (id) {
         if (!visible[id]) {
+          detachPreview(id);
           var el = cardById[id];
           if (el && el.parentNode) el.parentNode.removeChild(el);
           delete cardById[id];
         }
       });
+
+      // カードは仮想化で作り直されるため、近景の割り当ても都度貼り直す。
+      refreshPreviews();
     }
 
     function createCard(n) {
@@ -351,9 +388,177 @@
     }
 
     function positionCard(card, n) {
-      card.style.left = (n.x - CARD_W / 2) + 'px';
-      card.style.top = (n.y - CARD_H / 2) + 'px';
+      var isPreview = card.classList.contains('is-preview');
+      var w = isPreview ? PREVIEW_W : CARD_W;
+      var h = isPreview ? PREVIEW_H : CARD_H;
+      card.style.left = (n.x - w / 2) + 'px';
+      card.style.top = (n.y - h / 2) + 'px';
     }
+
+    /* ---------- 近景: インラインプレビュー（sandbox iframe） ---------- */
+
+    // pid -> プレビュー HTML の URL（ホストが払い出した不透明 URL）。
+    var previewUrlByPid = Object.create(null);
+    // pid|token -> 要求済み（二重要求の抑止）。
+    var previewRequested = Object.create(null);
+    // pid -> 読み込み失敗後に再試行済み（無限反復の抑止。テーマ切替でリセット）。
+    var previewRetried = Object.create(null);
+
+    // テーマ切替のたびに増える世代番号。応答の照合に使う。
+    // テーマ名だけで照合すると light→dark→light と素早く切り替えたとき、
+    // 最初の light の応答が現世代として誤って受理されるため、世代まで見る。
+    var previewGeneration = 0;
+
+    function previewToken() {
+      return currentThemeName() + '#' + previewGeneration;
+    }
+
+    function requestPreview(n) {
+      if (!n.pid) return;
+      var key = n.pid + '|' + previewToken();
+      if (previewRequested[key]) return;
+      previewRequested[key] = true;
+      postToHost({
+        type: 'canvasPreview',
+        pid: n.pid,
+        theme: currentThemeName(),
+        token: previewToken(),
+      });
+    }
+
+    // 取得済み URL と要求済みフラグを捨てて、再取得できる状態に戻す。
+    function forgetPreview(pid) {
+      if (!pid) return;
+      delete previewUrlByPid[pid];
+      var suffix = '|' + previewToken();
+      Object.keys(previewRequested).forEach(function (key) {
+        if (key === pid + suffix) {
+          delete previewRequested[key];
+        }
+      });
+    }
+
+    // カードへ iframe を貼る。URL 未取得ならホストへ要求だけ出して戻る
+    // （到着時に __cvSetPreview → refreshPreviews で貼り直される）。
+    function attachPreview(id, n) {
+      var card = cardById[id];
+      if (!card || !n.pid) return;
+
+      var url = previewUrlByPid[n.pid];
+      if (!url) {
+        requestPreview(n);
+        return;
+      }
+      if (card.__cvPreviewUrl === url) return; // 既に同じ内容を表示中。
+
+      detachPreview(id);
+
+      var frame = document.createElement('iframe');
+      frame.className = 'cv-card-preview';
+      // allow-scripts を付けない = プレビュー内のスクリプトは実行されない。
+      // viewer.js が動かないため、プレビューから postMessage が飛ぶこともない。
+      frame.setAttribute('sandbox', '');
+      frame.setAttribute('scrolling', 'auto');
+      frame.setAttribute('tabindex', '-1');
+      frame.setAttribute('title', n.label || '');
+
+      // 読み込みに失敗した場合は URL と要求済みフラグを捨てて作り直す。
+      // 恒常的な失敗で再取得が無限反復しないよう、1 世代につき 1 回だけ再試行する。
+      // （HTTP 404 は error ではなく load になるため、これは取りこぼしのない救済では
+      //  ない。掃除との競合そのものは CleanupPreviews の猶予時間で防いでいる。）
+      frame.addEventListener('error', function () {
+        safeRun(function () {
+          if (previewRetried[n.pid]) return;
+          previewRetried[n.pid] = true;
+          forgetPreview(n.pid);
+          detachPreview(id);
+          refreshPreviews();
+        });
+      });
+
+      frame.src = url;
+
+      card.insertBefore(frame, card.firstChild);
+      card.classList.add('is-preview');
+      card.__cvPreviewUrl = url;
+      positionCard(card, n);
+    }
+
+    // iframe を破棄してカード表示へ戻す（DOM に残さない）。
+    function detachPreview(id) {
+      var card = cardById[id];
+      if (!card) return;
+      var frame = card.querySelector('.cv-card-preview');
+      if (frame && frame.parentNode) {
+        frame.parentNode.removeChild(frame);
+      }
+      if (card.classList.contains('is-preview')) {
+        card.classList.remove('is-preview');
+        var n = byId[id];
+        if (n) positionCard(card, n);
+      }
+      card.__cvPreviewUrl = null;
+    }
+
+    // 近景対象（ビューポート中心に近い最大 MAX_PREVIEWS 枚）を選び直す。
+    function refreshPreviews() {
+      if (!document.body.classList.contains('mode-preview')) {
+        Object.keys(cardById).forEach(detachPreview);
+        return;
+      }
+
+      var t = currentTransform;
+      var cx = (window.innerWidth / 2 - t.x) / t.k;
+      var cy = (window.innerHeight / 2 - t.y) / t.k;
+
+      var candidates = [];
+      Object.keys(cardById).forEach(function (id) {
+        var n = byId[id];
+        if (!n || typeof n.x !== 'number' || typeof n.y !== 'number') return;
+        var dx = n.x - cx;
+        var dy = n.y - cy;
+        candidates.push({ id: id, n: n, d: dx * dx + dy * dy });
+      });
+      candidates.sort(function (a, b) { return a.d - b.d; });
+
+      var keep = Object.create(null);
+      candidates.slice(0, MAX_PREVIEWS).forEach(function (c) {
+        keep[c.id] = true;
+      });
+
+      Object.keys(cardById).forEach(function (id) {
+        if (!keep[id]) detachPreview(id);
+      });
+      candidates.slice(0, MAX_PREVIEWS).forEach(function (c) {
+        attachPreview(c.id, c.n);
+      });
+    }
+
+    // ホストからのプレビュー URL 通知。
+    // 応答は非同期のため、テーマを素早く切り替えると古いテーマの応答が後着し得る。
+    // 現在のテーマと一致しない応答は捨てる（逆テーマで固定されるのを防ぐ）。
+    window.__cvSetPreview = function (pid, url, token) {
+      safeRun(function () {
+        if (typeof pid !== 'string' || typeof url !== 'string') return;
+        if (typeof token === 'string' && token !== previewToken()) {
+          // 破棄した世代の応答。要求済みフラグごと捨てて、現世代で取り直せるようにする。
+          delete previewRequested[pid + '|' + token];
+          return;
+        }
+        previewUrlByPid[pid] = url;
+        refreshPreviews();
+      });
+    };
+
+    // テーマが変わるとプレビュー HTML も別物になるため、キャッシュごと作り直す。
+    onThemeChanged = function () {
+      previewGeneration++;
+      previewUrlByPid = Object.create(null);
+      previewRequested = Object.create(null);
+      previewRetried = Object.create(null);
+      Object.keys(cardById).forEach(detachPreview);
+      refreshPreviews();
+    };
 
     /* ---------- tick ---------- */
 
@@ -379,6 +584,15 @@
 
     // 力学が落ち着いたら一度保存（初期レイアウトの確定）。
     simulation.on('end', function () {
+      // 座標未確定のまま要求された俯瞰は、収束後のここで適用する
+      // （var 巻き上げにより pendingFit / fitToContent は定義済み）。
+      if (pendingFit) {
+        safeRun(function () {
+          if (fitToContent()) {
+            pendingFit = false;
+          }
+        });
+      }
       scheduleSave();
       scheduleCardRefresh();
     });
@@ -498,10 +712,56 @@
       });
     });
 
+    /* ---------- 全体俯瞰（Ctrl+G / グラフボタンの着地点） ---------- */
+
+    // 全ノードが収まる遠景へズームアウトする。座標が未確定（力学モデルが
+    // まだ動いていない）場合は何もしない（simulation 終了時に再試行される）。
+    function fitToContent() {
+      var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      nodes.forEach(function (n) {
+        if (typeof n.x !== 'number' || typeof n.y !== 'number') return;
+        if (!isFinite(n.x) || !isFinite(n.y)) return;
+        if (n.x < minX) minX = n.x;
+        if (n.x > maxX) maxX = n.x;
+        if (n.y < minY) minY = n.y;
+        if (n.y > maxY) maxY = n.y;
+      });
+      if (!isFinite(minX) || !isFinite(minY)) return false;
+
+      var pad = 80;
+      var w = Math.max(maxX - minX, 1) + pad * 2;
+      var h = Math.max(maxY - minY, 1) + pad * 2;
+      var k = Math.min(window.innerWidth / w, window.innerHeight / h);
+
+      // 俯瞰は必ず遠景（ノード + エッジ）で見せる。ズーム下限は scaleExtent に合わせる。
+      k = Math.max(0.1, Math.min(k, CARD_THRESHOLD - 0.05));
+
+      var tx = window.innerWidth / 2 - k * (minX + maxX) / 2;
+      var ty = window.innerHeight / 2 - k * (minY + maxY) / 2;
+      stageSel.call(zoomBehavior.transform, d3.zoomIdentity.translate(tx, ty).scale(k));
+      return true;
+    }
+
+    var pendingFit = !!data.overview;
+
+    window.__cvFitToContent = function () {
+      safeRun(function () {
+        if (!fitToContent()) {
+          pendingFit = true; // 座標未確定。力学モデルの収束後に適用する。
+        }
+      });
+    };
+
     // 初期モード反映。保存済みビューポートはここで復元する
     // （zoomBehavior.transform は同期的に zoom ハンドラを発火させるため、
     //  refreshCards 等が参照する状態がすべて定義された後でなければならない）。
-    if (data.view && typeof data.view.k === 'number' && data.view.k > 0) {
+    if (pendingFit) {
+      applyTransform();
+      updateMode();
+      if (fitToContent()) {
+        pendingFit = false;
+      }
+    } else if (data.view && typeof data.view.k === 'number' && data.view.k > 0) {
       stageSel.call(zoomBehavior.transform,
         d3.zoomIdentity.translate(data.view.x || 0, data.view.y || 0).scale(data.view.k));
     } else {

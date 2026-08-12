@@ -58,6 +58,9 @@ public static class CanvasLayoutStore
     /// <summary>サムネイル PNG の置き場（thumbs.hirake 仮想ホストのマップ先）。</summary>
     public static string ThumbsDirectory => Path.Combine(CanvasDirectory, "thumbs");
 
+    /// <summary>近景プレビュー HTML の置き場（previews.hirake 仮想ホストのマップ先）。</summary>
+    public static string PreviewsDirectory => Path.Combine(CanvasDirectory, "previews");
+
     /// <summary>文書のサムネイル PNG のフルパス（ファイル名はフルパスのハッシュ）。</summary>
     public static string ThumbnailPathFor(string documentFullPath)
         => Path.Combine(ThumbsDirectory, HashName(documentFullPath) + ".png");
@@ -65,6 +68,54 @@ public static class CanvasLayoutStore
     /// <summary>サムネイルのファイル名部分のみ（仮想ホスト URL 組み立て用）。</summary>
     public static string ThumbnailNameFor(string documentFullPath)
         => HashName(documentFullPath) + ".png";
+
+    /// <summary>
+    /// 文書の不透明 ID（pid）。canvas.js へはこの ID だけを渡し、実ファイルパスを
+    /// ブラウザ側・iframe URL に露出させない（#32 の成功条件）。
+    /// </summary>
+    public static string PreviewIdFor(string documentFullPath) => HashName(documentFullPath);
+
+    /// <summary>
+    /// pid として妥当か（HashName が生成する 16 桁の小文字 hex のみ許可）。
+    /// pid はブラウザ側から届く値であり、そのままファイル名へ連結するため、
+    /// 呼び出し側の照合に依存せず API 自身でも形式を検証する。
+    /// </summary>
+    public static bool IsValidPreviewId(
+        [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] string? pid)
+    {
+        if (pid == null || pid.Length != 16)
+        {
+            return false;
+        }
+        foreach (char c in pid)
+        {
+            bool ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+            if (!ok)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// 近景プレビュー HTML のファイル名。キーは pid + 更新時刻 + テーマで、
+    /// 文書更新・テーマ切替のたびに別ファイルになる（＝キャッシュ無効化）。
+    /// </summary>
+    /// <exception cref="ArgumentException">pid が 16 桁 hex でない場合。</exception>
+    public static string PreviewNameFor(string pid, long mtimeTicks, string theme)
+    {
+        if (!IsValidPreviewId(pid))
+        {
+            throw new ArgumentException("pid の形式が不正です。", nameof(pid));
+        }
+        return pid + "-" + mtimeTicks.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            + "-" + (theme == "dark" ? "dark" : "light") + ".html";
+    }
+
+    /// <summary>近景プレビュー HTML のフルパス。</summary>
+    public static string PreviewPathFor(string pid, long mtimeTicks, string theme)
+        => Path.Combine(PreviewsDirectory, PreviewNameFor(pid, mtimeTicks, theme));
 
     private static string LayoutFilePath(string rootFolder)
         => Path.Combine(CanvasDirectory, HashName(rootFolder) + ".json");
@@ -186,22 +237,51 @@ public static class CanvasLayoutStore
     // サムネイル置場の容量バジェット（超過分は古い順に削除）。
     private const long MaxThumbsBytes = 200L * 1024 * 1024;
 
+    // 近景プレビュー置場のバジェット（#32: 50 ファイル / 50MB の LRU）。
+    private const long MaxPreviewBytes = 50L * 1024 * 1024;
+    private const int MaxPreviewFiles = 50;
+
+    // 直近に作成・参照されたプレビューを掃除対象から外す猶予時間。
+    private static readonly TimeSpan PreviewGracePeriod = TimeSpan.FromMinutes(10);
+
     /// <summary>
     /// サムネイル置場の掃除: .tmp 残骸を削除し、合計サイズが予算を超える分を
     /// 最終更新の古い順に削除する。失敗は無視（次回また試みる）。
     /// キャンバスを開いたときにバックグラウンドで 1 回呼ばれる。
     /// </summary>
     public static void CleanupThumbnails()
+        => CleanupCacheDirectory(
+            ThumbsDirectory, MaxThumbsBytes, maxFiles: int.MaxValue, minAge: TimeSpan.Zero);
+
+    /// <summary>
+    /// 近景プレビュー置場の掃除（LRU）。件数・容量のいずれかの上限を超えた分を
+    /// 最終更新の古い順に削除する。キャンバスを開いたときに 1 回呼ばれる。
+    ///
+    /// 直近 <see cref="PreviewGracePeriod"/> 以内に作成・参照されたファイルは削除しない。
+    /// 表示中（または表示直前）のプレビューを掃除が消して iframe が 404 になる競合を、
+    /// 排他なしで防ぐための猶予。
+    /// </summary>
+    public static void CleanupPreviews()
+        => CleanupCacheDirectory(
+            PreviewsDirectory, MaxPreviewBytes, MaxPreviewFiles, PreviewGracePeriod);
+
+    /// <summary>
+    /// キャッシュ置場の共通掃除。.tmp 残骸（1 時間以上前）を削除したうえで、
+    /// 合計サイズ・件数の上限を超える分を最終更新の古い順に削除する。
+    /// <paramref name="minAge"/> より新しいファイルは削除対象から除外する。
+    /// </summary>
+    private static void CleanupCacheDirectory(
+        string directory, long maxBytes, int maxFiles, TimeSpan minAge)
     {
         try
         {
-            if (!Directory.Exists(ThumbsDirectory))
+            if (!Directory.Exists(directory))
             {
                 return;
             }
 
             var files = new List<FileInfo>();
-            foreach (string file in Directory.EnumerateFiles(ThumbsDirectory))
+            foreach (string file in Directory.EnumerateFiles(directory))
             {
                 try
                 {
@@ -224,21 +304,30 @@ public static class CanvasLayoutStore
             }
 
             long total = files.Sum(f => f.Length);
-            if (total <= MaxThumbsBytes)
+            int count = files.Count;
+            if (total <= maxBytes && count <= maxFiles)
             {
                 return;
             }
 
+            DateTime protectedAfter = DateTime.UtcNow - minAge;
             foreach (FileInfo info in files.OrderBy(f => f.LastWriteTimeUtc))
             {
-                if (total <= MaxThumbsBytes)
+                if (total <= maxBytes && count <= maxFiles)
                 {
+                    break;
+                }
+                if (minAge > TimeSpan.Zero && info.LastWriteTimeUtc > protectedAfter)
+                {
+                    // 以降は更に新しいファイルしかない（古い順に並んでいる）。
                     break;
                 }
                 try
                 {
-                    total -= info.Length;
+                    long length = info.Length;
                     info.Delete();
+                    total -= length;
+                    count--;
                 }
                 catch
                 {
