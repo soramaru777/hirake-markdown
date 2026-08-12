@@ -193,7 +193,7 @@
                             Foreground="{DynamicResource ChromeText}"
                             Cursor="Hand"
                             IsEnabled="False"
-                            ToolTip="PDF にエクスポート (Ctrl+Shift+E)" />
+                            ToolTip="PDF にエクスポート (Ctrl+Shift+E) / 画面のズーム倍率で出力" />
 
                     <Button x:Name="PrintButton"
                             Click="PrintButton_Click"
