@@ -7,8 +7,14 @@ using Markdig.Syntax.Inlines;
 
 namespace Hirake;
 
+/// <summary>hirake:// の解析結果（検証済み）。verb ごとに派生型を持つ。</summary>
+public abstract record HirakeRequest;
+
 /// <summary>hirake://open の解析結果（検証済み）。</summary>
-public sealed record HirakeOpenRequest(string Path, int? Line, string? Heading);
+public sealed record HirakeOpenRequest(string Path, int? Line, string? Heading) : HirakeRequest;
+
+/// <summary>hirake://workspace の解析結果（検証済み）。</summary>
+public sealed record HirakeWorkspaceRequest(string Name) : HirakeRequest;
 
 /// <summary>
 /// hirake:// URL スキームの解析と検証。
@@ -29,8 +35,11 @@ public static class HirakeUri
 {
     public const string Scheme = "hirake";
 
-    /// <summary>今回実装する verb。未知の verb（workspace / canvas 等）は拒否する。</summary>
+    /// <summary>実装済みの verb。未知の verb（canvas 等）は拒否する。</summary>
     private const string OpenVerb = "open";
+
+    /// <summary>ワークスペースをウィンドウとして開く verb。</summary>
+    private const string WorkspaceVerb = "workspace";
 
     private const int MaxUriLength = 2048;
     private const int MaxHeadingLength = 200;
@@ -58,7 +67,7 @@ public static class HirakeUri
     /// 未知キー・キー重複・値の不正はいずれも URI 全体の拒否とする
     /// （処理系ごとの解釈差を突かれないよう、曖昧な入力は受け付けない）。
     /// </summary>
-    public static bool TryParse(string? uri, out HirakeOpenRequest? request)
+    public static bool TryParse(string? uri, out HirakeRequest? request)
     {
         request = null;
 
@@ -75,20 +84,29 @@ public static class HirakeUri
         string rest = uri[SchemePrefix.Length..];
         int queryIndex = rest.IndexOf('?');
         string verb = (queryIndex < 0 ? rest : rest[..queryIndex]).TrimEnd('/');
+
+        if (queryIndex < 0)
+        {
+            return false; // どの verb もクエリが必須。
+        }
+
+        string query = rest[(queryIndex + 1)..];
+
+        if (string.Equals(verb, WorkspaceVerb, StringComparison.OrdinalIgnoreCase))
+        {
+            return TryParseWorkspace(query, out request);
+        }
+
         if (!string.Equals(verb, OpenVerb, StringComparison.OrdinalIgnoreCase))
         {
             return false; // 未知・未実装の verb は無視する。
-        }
-        if (queryIndex < 0)
-        {
-            return false; // path が必須のためクエリなしは不正。
         }
 
         string? rawPath = null;
         string? rawLine = null;
         string? rawHeading = null;
 
-        foreach (string pair in rest[(queryIndex + 1)..].Split('&'))
+        foreach (string pair in query.Split('&'))
         {
             if (pair.Length == 0)
             {
@@ -147,6 +165,61 @@ public static class HirakeUri
         return true;
     }
 
+    /// <summary>
+    /// URL エンコードされていない生のパスを、open verb と同じ規則で検証する。
+    /// workspaces.json はローカルファイルであり書き換えられ得るため、そこから
+    /// 復元する文書パスもこの規則を通す（送信元を問わず入口で同じ検証をする）。
+    /// 受理できなければ null。
+    /// </summary>
+    public static string? ValidateDocumentPath(string? path) => ValidatePathCore(path);
+
+    /// <summary>
+    /// フォルダが UNC・ネットワークドライブ・再解析ポイント経由かどうか。
+    /// 仮想タブ（キャンバス等）の起点フォルダの検証に使う。判定できない場合は
+    /// リモート扱い（true）にする（fail-closed）。
+    /// </summary>
+    public static bool IsRemoteOrUncFolder(string? folder)
+    {
+        if (string.IsNullOrWhiteSpace(folder) || folder.IndexOfAny(InvalidPathChars) >= 0)
+        {
+            return true;
+        }
+
+        if (folder.StartsWith(@"\\", StringComparison.Ordinal)
+            || folder.StartsWith("//", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        try
+        {
+            string full = Path.GetFullPath(folder);
+
+            if (full.StartsWith(@"\\", StringComparison.Ordinal) || !Path.IsPathFullyQualified(full))
+            {
+                return true;
+            }
+
+            string? root = Path.GetPathRoot(full);
+            if (string.IsNullOrEmpty(root))
+            {
+                return true;
+            }
+
+            var drive = new DriveInfo(root);
+            if (drive.DriveType is DriveType.Network or DriveType.Unknown or DriveType.NoRootDirectory)
+            {
+                return true;
+            }
+
+            return HasLinkInPath(full);
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
     private static string? TryDecodeAndValidatePath(string? rawPath)
     {
         if (string.IsNullOrWhiteSpace(rawPath))
@@ -165,6 +238,11 @@ public static class HirakeUri
             return null;
         }
 
+        return ValidatePathCore(decoded);
+    }
+
+    private static string? ValidatePathCore(string? decoded)
+    {
         if (string.IsNullOrWhiteSpace(decoded) || decoded.IndexOfAny(InvalidPathChars) >= 0)
         {
             return null;
@@ -471,6 +549,70 @@ public static class HirakeUri
             }
         }
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// hirake://workspace?name=&lt;名前&gt; を解析する。
+    /// 名前はパスとして一切解釈しない（ファイル名に落とさない設計のため、
+    /// トラバーサルの経路自体が存在しない）。制御文字と長さだけを検証する。
+    /// </summary>
+    private static bool TryParseWorkspace(string query, out HirakeRequest? request)
+    {
+        request = null;
+
+        string? rawName = null;
+
+        foreach (string pair in query.Split('&'))
+        {
+            if (pair.Length == 0)
+            {
+                return false; // 空要素は受け付けない。
+            }
+
+            int eq = pair.IndexOf('=');
+            if (eq <= 0)
+            {
+                return false; // '=' 欠損・キー空。
+            }
+
+            string key = pair[..eq];
+            string value = pair[(eq + 1)..];
+
+            if (key.Equals("name", StringComparison.OrdinalIgnoreCase))
+            {
+                if (rawName != null) return false; // キー重複は拒否。
+                rawName = value;
+            }
+            else
+            {
+                return false; // 未知キーは拒否。
+            }
+        }
+
+        if (rawName == null)
+        {
+            return false; // name は必須。
+        }
+
+        string decoded;
+        try
+        {
+            decoded = Uri.UnescapeDataString(rawName);
+        }
+        catch
+        {
+            return false;
+        }
+
+        // 空白の正規化・制御文字の拒否・長さ上限は WorkspaceStore と同じ規則を使う。
+        string name = WorkspaceStore.NormalizeName(decoded);
+        if (name.Length == 0)
+        {
+            return false;
+        }
+
+        request = new HirakeWorkspaceRequest(name);
+        return true;
     }
 
     // ---- URI 組み立て（「この位置へのリンクをコピー」用） ---------------

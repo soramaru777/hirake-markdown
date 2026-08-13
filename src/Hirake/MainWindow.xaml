@@ -218,6 +218,20 @@
                             IsEnabled="False"
                             ToolTip="印刷 (Ctrl+P)" />
 
+                    <Button x:Name="WorkspaceButton"
+                            Click="WorkspaceButton_Click"
+                            Content="&#xE7C4;"
+                            FontFamily="Segoe MDL2 Assets"
+                            FontSize="14"
+                            Padding="8,4"
+                            Margin="4,2"
+                            VerticalAlignment="Center"
+                            BorderThickness="0"
+                            Background="Transparent"
+                            Foreground="{DynamicResource ChromeText}"
+                            Cursor="Hand"
+                            ToolTip="ワークスペース (Ctrl+Shift+W)" />
+
                     <Button x:Name="ThemeButton"
                             Click="ThemeButton_Click"
                             Content="&#xE793;"
@@ -231,6 +245,121 @@
                             Foreground="{DynamicResource ChromeText}"
                             Cursor="Hand"
                             ToolTip="テーマ: 自動 (Ctrl+Shift+D)" />
+
+                    <!-- ワークスペース一覧。専用の Window クラスは作らず Popup で完結させる
+                         （モーダル入力窓の土台が無いため、既存の作りに合わせる）。 -->
+                    <Popup x:Name="WorkspacePopup"
+                           PlacementTarget="{Binding ElementName=WorkspaceButton}"
+                           Placement="Bottom"
+                           StaysOpen="False"
+                           AllowsTransparency="True"
+                           PopupAnimation="Fade"
+                           Closed="WorkspacePopup_Closed">
+                        <Border Background="{DynamicResource ChromeBarBackground}"
+                                BorderBrush="{DynamicResource ChromeBorder}"
+                                BorderThickness="1"
+                                Padding="6"
+                                MinWidth="280"
+                                MaxWidth="360">
+                            <StackPanel>
+                                <TextBlock Text="ワークスペース"
+                                           Foreground="{DynamicResource ChromeSubText}"
+                                           FontSize="11"
+                                           Margin="4,2,4,6" />
+
+                                <ItemsControl x:Name="WorkspaceList" MaxHeight="320">
+                                    <ItemsControl.Template>
+                                        <ControlTemplate TargetType="ItemsControl">
+                                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                                <ItemsPresenter />
+                                            </ScrollViewer>
+                                        </ControlTemplate>
+                                    </ItemsControl.Template>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,1">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+
+                                                <Button Grid.Column="0"
+                                                        Click="WorkspaceOpen_Click"
+                                                        Tag="{Binding Id}"
+                                                        HorizontalContentAlignment="Stretch"
+                                                        Padding="6,4"
+                                                        BorderThickness="0"
+                                                        Background="Transparent"
+                                                        Foreground="{DynamicResource ChromeText}"
+                                                        Cursor="Hand"
+                                                        ToolTip="{Binding Name}">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Text="{Binding OpenMark}"
+                                                                   Width="14"
+                                                                   Foreground="{DynamicResource ChromeSubText}" />
+                                                        <TextBlock Text="{Binding Name}"
+                                                                   TextTrimming="CharacterEllipsis"
+                                                                   MaxWidth="220" />
+                                                        <TextBlock Text="{Binding TabLabel}"
+                                                                   Margin="8,0,0,0"
+                                                                   Foreground="{DynamicResource ChromeSubText}" />
+                                                    </StackPanel>
+                                                </Button>
+
+                                                <Button Grid.Column="1"
+                                                        Click="WorkspaceDelete_Click"
+                                                        Tag="{Binding Id}"
+                                                        Content="&#xE74D;"
+                                                        FontFamily="Segoe MDL2 Assets"
+                                                        FontSize="12"
+                                                        Padding="6,4"
+                                                        BorderThickness="0"
+                                                        Background="Transparent"
+                                                        Foreground="{DynamicResource ChromeSubText}"
+                                                        Cursor="Hand"
+                                                        ToolTip="削除" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <TextBlock x:Name="WorkspaceEmptyText"
+                                           Text="保存されたワークスペースはありません。"
+                                           Foreground="{DynamicResource ChromeSubText}"
+                                           FontSize="11"
+                                           Margin="6,4"
+                                           Visibility="Collapsed" />
+
+                                <Separator Margin="0,6" />
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <TextBox x:Name="WorkspaceNameBox"
+                                             Grid.Column="0"
+                                             MaxLength="60"
+                                             Padding="4,3"
+                                             Background="{DynamicResource ChromeInputBackground}"
+                                             Foreground="{DynamicResource ChromeText}"
+                                             BorderBrush="{DynamicResource ChromeBorder}"
+                                             CaretBrush="{DynamicResource ChromeText}"
+                                             VerticalContentAlignment="Center"
+                                             KeyDown="WorkspaceNameBox_KeyDown"
+                                             ToolTip="このウィンドウのタブ構成を名前を付けて保存します" />
+
+                                    <Button Grid.Column="1"
+                                            Click="WorkspaceSave_Click"
+                                            Content="保存"
+                                            Padding="10,3"
+                                            Margin="6,0,0,0"
+                                            Cursor="Hand" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </Popup>
                 </StackPanel>
             </Grid>
         </Border>

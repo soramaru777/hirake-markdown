@@ -27,6 +27,8 @@
  *     { type:'shortcut', action:'toggleFingerprintView' } Ctrl+Shift+R
  *     { type:'shortcut', action:'toggleStatsView' } Ctrl+Shift+T
  *     { type:'shortcut', action:'toggleCanvasView' } Ctrl+Shift+C
+ *     { type:'shortcut', action:'toggleWorkspaceMenu' } Ctrl+Shift+W
+ *     { type:'shortcut', action:'newWindow' }        Ctrl+N
  *   ホスト→WebView 公開関数:
  *     window.__mdvSetTheme('light'|'dark')  テーマ切替（スクロールは動かさない）
  *     window.__mdvRestoreScroll(y)          スクロール位置の復元（Mermaid 描画後にも再適用）
@@ -1247,6 +1249,11 @@
         postToHost({ type: 'shortcut', action: 'toggleCanvasView' });
         return;
       }
+      if (key === 'w') {
+        event.preventDefault();
+        postToHost({ type: 'shortcut', action: 'toggleWorkspaceMenu' });
+        return;
+      }
       // 未対応の Ctrl+Shift+* はブラウザ標準に委ねる。
       return;
     }
@@ -1269,6 +1276,12 @@
     if (!event.shiftKey && key === 'o') {
       event.preventDefault();
       postToHost({ type: 'shortcut', action: 'openFile' });
+      return;
+    }
+
+    if (!event.shiftKey && key === 'n') {
+      event.preventDefault();
+      postToHost({ type: 'shortcut', action: 'newWindow' });
       return;
     }
 

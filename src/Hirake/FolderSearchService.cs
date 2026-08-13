@@ -128,6 +128,14 @@ public static class FolderSearchService
     /// <summary>隠しフォルダ・node_modules・.git をスキップしつつ Markdown を再帰列挙する。</summary>
     internal static IEnumerable<string> EnumerateMarkdownFiles(string root, CancellationToken token)
     {
+        // 起点そのものも検査する。子フォルダだけを検査していると、root が
+        // ジャンクション／シンボリックリンクだった場合に一度も検査を通らず、
+        // リンク先（UNC 共有など）をそのまま走査してしまう。
+        if (!FileTreeItem.IsSafeTraversalRoot(root))
+        {
+            yield break;
+        }
+
         var stack = new Stack<(string Dir, int Depth)>();
         stack.Push((root, 0));
 

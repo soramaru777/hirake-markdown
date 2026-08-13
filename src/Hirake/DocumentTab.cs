@@ -28,6 +28,8 @@ public interface IDocumentTabHost
     void ShortcutToggleFingerprintView();
     void ShortcutToggleStatsView();
     void ShortcutToggleCanvasView();
+    void ShortcutToggleWorkspaceMenu();
+    void ShortcutNewWindow();
     void OnTabZoomChanged(DocumentTab source, double zoomFactor);
 }
 
@@ -1308,6 +1310,12 @@ public class DocumentTab : IDisposable
                     break;
                 case "toggleCanvasView":
                     _host.ShortcutToggleCanvasView();
+                    break;
+                case "toggleWorkspaceMenu":
+                    _host.ShortcutToggleWorkspaceMenu();
+                    break;
+                case "newWindow":
+                    _host.ShortcutNewWindow();
                     break;
             }
         }

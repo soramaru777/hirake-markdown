@@ -138,6 +138,12 @@ public sealed class FileTreeItem : INotifyPropertyChanged
         var dirs = new List<FileTreeItem>();
         var files = new List<FileTreeItem>();
 
+        // 起点そのものも検査する（子だけを検査すると、リンクを直接開いた場合に素通りする）。
+        if (!IsSafeTraversalRoot(directory))
+        {
+            return new List<FileTreeItem>();
+        }
+
         try
         {
             foreach (var sub in Directory.EnumerateDirectories(directory))
@@ -188,15 +194,36 @@ public sealed class FileTreeItem : INotifyPropertyChanged
         string ext = Path.GetExtension(path);
         foreach (var candidate in MarkdownExtensions)
         {
-            if (ext.Equals(candidate, StringComparison.OrdinalIgnoreCase))
+            if (!ext.Equals(candidate, StringComparison.OrdinalIgnoreCase))
             {
-                return true;
+                continue;
             }
+
+            // 拡張子が合っていても、リンク先が別の場所（UNC 共有など）を指す
+            // ファイル symlink は対象にしない。
+            return !IsLinkedFile(path);
         }
         return false;
     }
 
-    /// <summary>隠しフォルダ・ドット始まり・node_modules をスキップ対象とする。</summary>
+    /// <summary>
+    /// 隠しフォルダ・ドット始まり・node_modules・再解析ポイントをスキップ対象とする。
+    ///
+    /// 再解析ポイント（ジャンクション／シンボリックリンク）を除外するのは 2 つの理由から。
+    /// 1 つは、起点フォルダ自体がローカルでも配下のリンクが UNC 共有を指していれば、
+    /// そこを走査した時点で SMB 認証情報の漏洩経路になるため（hirake:// の UNC 拒否と
+    /// 同じ目的。#42 でワークスペースから任意フォルダを起点にできるようになり、
+    /// この経路が外部入力から到達可能になった）。もう 1 つはリンクの循環による
+    /// 無限再帰を避けるため。
+    ///
+    /// 判定は ReparsePoint 属性ではなく <see cref="FileSystemInfo.LinkTarget"/> で行う。
+    /// OneDrive などのクラウド同期フォルダも ReparsePoint 属性を持つため、属性で
+    /// 判定すると同期フォルダ配下がまるごと検索・ツリーから消える。LinkTarget が
+    /// 非 null になるのはシンボリックリンクとジャンクションだけで、狙いどおり
+    /// 「別の場所を指しているフォルダ」だけを除外できる。
+    ///
+    /// 判定できない場合はスキップする（辿ってよいと確認できないものは辿らない）。
+    /// </summary>
     public static bool ShouldSkipDirectory(string path)
     {
         string name = Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar));
@@ -214,17 +241,61 @@ public sealed class FileTreeItem : INotifyPropertyChanged
         }
         try
         {
-            var attr = File.GetAttributes(path);
-            if ((attr & FileAttributes.Hidden) == FileAttributes.Hidden)
+            var info = new DirectoryInfo(path);
+            if ((info.Attributes & FileAttributes.Hidden) == FileAttributes.Hidden)
+            {
+                return true;
+            }
+            if (info.LinkTarget != null)
             {
                 return true;
             }
         }
         catch
         {
-            // 属性取得失敗は無視する。
+            return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// 走査の「起点」として安全なフォルダか。
+    ///
+    /// 子フォルダ用の <see cref="ShouldSkipDirectory"/> をそのまま起点へ流用しない。
+    /// あちらは「再帰中に自動で降りていくべきでない場所」（ドット始まり・
+    /// node_modules・隠しフォルダ）まで弾くため、ユーザーが明示的に選んだ
+    /// <c>.notes</c> のようなフォルダを起点にできなくなる。
+    /// 起点で確認するのは安全性だけ、すなわちリンクでないことと、判定できること。
+    /// </summary>
+    public static bool IsSafeTraversalRoot(string path)
+    {
+        try
+        {
+            var info = new DirectoryInfo(path);
+            return info.Exists && info.LinkTarget == null;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// ファイルがリンク（シンボリックリンク／ハードリンク以外の再解析ポイント）かどうか。
+    /// フォルダだけを検査しても、ローカルフォルダ直下に <c>\\server\share\x.md</c> を
+    /// 指すファイル symlink があれば同じ漏洩経路になるため、ファイルにも同じ判定を行う。
+    /// 判定できない場合はリンク扱いにする（fail-closed）。
+    /// </summary>
+    public static bool IsLinkedFile(string path)
+    {
+        try
+        {
+            return new FileInfo(path).LinkTarget != null;
+        }
+        catch
+        {
+            return true;
+        }
     }
 
     /// <summary>ContainsMarkdown の結果をキャッシュ経由で返す（トップレベル問い合わせ用）。</summary>

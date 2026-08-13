@@ -30,6 +30,7 @@
  *     window.__mdvSetTheme('light'|'dark')  テーマ切替（配色は CSS 変数追従）
  *     window.__cvSetPreview(pid, url, token) 要求したプレビュー HTML の URL 通知
  *     window.__cvFitToContent()             全体俯瞰（遠景）へズームアウト（Ctrl+G）
+ *     window.__cvSetView(x, y, k)           ビューポートの適用（ワークスペース復元）
  *
  * 信頼境界:
  *   iframe の src はホストが払い出す previews.hirake の不透明ファイル名のみで、
@@ -749,6 +750,18 @@
         if (!fitToContent()) {
           pendingFit = true; // 座標未確定。力学モデルの収束後に適用する。
         }
+      });
+    };
+
+    // ワークスペース復元時に、既に開いているキャンバスへビューポートを適用する。
+    // 新規に開く場合は data.view で初期化されるため、この関数は使わない。
+    window.__cvSetView = function (x, y, k) {
+      safeRun(function () {
+        if (typeof k !== 'number' || !isFinite(k) || k <= 0) return;
+        if (typeof x !== 'number' || !isFinite(x)) return;
+        if (typeof y !== 'number' || !isFinite(y)) return;
+        pendingFit = false;
+        stageSel.call(zoomBehavior.transform, d3.zoomIdentity.translate(x, y).scale(k));
       });
     };
 
