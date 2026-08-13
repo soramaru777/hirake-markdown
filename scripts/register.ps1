@@ -74,114 +74,37 @@ Hirake.exe が見つかりませんでした。以下のいずれかの方法で
 
 $resolvedExePath = Resolve-HirakeExePath -Explicit $ExePath
 
-# unregister.ps1 は shell\open\command の実行ファイル名が 'Hirake.exe' であることを
-# 手掛かりに「Hirake が登録したキーか」を判定する。別名の exe を登録できてしまうと
-# 解除できない状態を作れるため、ここで弾く。
-$exeName = 'Hirake.exe'
-if ((Split-Path -Path $resolvedExePath -Leaf) -ne $exeName) {
-    Write-Error "'$exeName' 以外の実行ファイルは登録できません（unregister.ps1 が解除できなくなるため）: $resolvedExePath"
-    exit 1
-}
-
-Write-Host "Hirake.exe を検出しました: $resolvedExePath"
-
 $progId = 'Hirake.md'
-$progIdKey = "HKCU:\Software\Classes\$progId"
 $schemeKey = 'HKCU:\Software\Classes\hirake'
-$openCommand = "`"$resolvedExePath`" `"%1`""
+$exeName = 'Hirake.exe'
 
-# 1. Hirake 名義のキーが別アプリに使われていないか先に確認する。
-#    使われていた場合は 1 つも書き換えずに中止する（奪い取らない）。
-foreach ($target in @(
-        @{ Path = $progIdKey; Label = "ProgId '$progId'" },
-        @{ Path = $schemeKey; Label = "URL プロトコル 'hirake://'" })) {
-    if ((Test-HirakeOwnedKey -Path $target.Path -ExeName $exeName) -eq 'NotOwned') {
-        Write-Error "$($target.Label) のキーは Hirake 以外のプログラムが使用しているため、登録を中止しました: $($target.Path)"
-        exit 1
-    }
+# 手順そのものは association-lib.ps1 の Invoke-HirakeRegister が持つ。
+# ここに残すのは、引数の解決・メッセージ表示・終了コードだけ
+# （手順を関数にしておくことで、テストから使い捨ての対象を渡して
+#  本番と同一の順序・同一の中止判断を検証できる）。
+$result = Invoke-HirakeRegister `
+    -ExePath          $resolvedExePath `
+    -ProgId           $progId `
+    -SchemeKey        $schemeKey `
+    -Extensions       @('.md', '.markdown') `
+    -DefaultExtension '.md' `
+    -ExpectedExeName  $exeName
+
+# 表示内容と終了コードの決定も退行しうるため、純粋関数として切り出してある
+# （tests/test-association-flow.ps1 がレジストリに触れずに検証する）。
+$presentation = Get-HirakeRegisterPresentation `
+    -Result          $result `
+    -ExePath         $resolvedExePath `
+    -ProgId          $progId `
+    -SchemeKey       $schemeKey `
+    -ExpectedExeName $exeName
+
+Write-HirakePresentation -Presentation $presentation
+
+# エクスプローラーへの反映通知は、実際に書き込みを行った場合だけ意味がある。
+# （中止パスは Write-Error が終端例外になるためここへは到達しない）
+if ($presentation.Notify) {
+    Send-ShellChangeNotification
 }
 
-# 2. ProgId と URL プロトコルの登録
-#    キーは作り直さず、必要な値だけを上書きする（削除→再作成の間に失敗すると
-#    元の設定が失われ、ユーザーが追加した verb なども巻き添えになるため）。
-#    ここで失敗した場合は拡張子側に手を付けず中止する（参照先の無い
-#    OpenWithProgIds エントリを作らないため）。
-try {
-    Initialize-RegistryKey -Path $progIdKey
-    Set-ItemProperty -Path $progIdKey -Name '(default)' -Value 'Markdown Document'
-
-    Initialize-RegistryKey -Path "$progIdKey\DefaultIcon"
-    Set-ItemProperty -Path "$progIdKey\DefaultIcon" -Name '(default)' -Value "$resolvedExePath,0"
-
-    Initialize-RegistryKey -Path "$progIdKey\shell\open\command"
-    Set-ItemProperty -Path "$progIdKey\shell\open\command" -Name '(default)' -Value $openCommand
-
-    Write-Host "ProgId '$progId' を登録しました。"
-
-    # 'URL Protocol' は値が空文字のまま「プロパティが存在すること」に意味がある。
-    Initialize-RegistryKey -Path $schemeKey
-    Set-ItemProperty -Path $schemeKey -Name '(default)' -Value 'URL:Hirake Protocol'
-    New-ItemProperty -Path $schemeKey -Name 'URL Protocol' -Value '' -PropertyType String -Force | Out-Null
-
-    Initialize-RegistryKey -Path "$schemeKey\DefaultIcon"
-    Set-ItemProperty -Path "$schemeKey\DefaultIcon" -Name '(default)' -Value "$resolvedExePath,0"
-
-    Initialize-RegistryKey -Path "$schemeKey\shell\open\command"
-    Set-ItemProperty -Path "$schemeKey\shell\open\command" -Name '(default)' -Value $openCommand
-
-    Write-Host "URL プロトコル 'hirake://' を登録しました。"
-} catch {
-    Write-Warning "ProgId / URL プロトコルの登録に失敗しました: $($_.Exception.Message)"
-    Write-Warning '一部だけ書き込まれている可能性があります。原因を解消してから register.ps1 を再実行してください。'
-    exit 1
-}
-
-# 3. .md / .markdown の登録
-#    ☆共有キーなので作り直さず、自分のエントリだけを足す。
-#    .md のみ、既定プログラムが未設定の場合に限り Hirake を設定する。
-$failures = 0
-
-foreach ($ext in @('.md', '.markdown')) {
-    $setAsDefault = ($ext -eq '.md')
-
-    try {
-        $result = Register-HirakeExtension -Extension $ext -ProgId $progId -SetAsDefault:$setAsDefault
-
-        if ($result.Written) {
-            Write-Host "拡張子 '$ext' の OpenWithProgIds に '$progId' を登録しました。"
-        } else {
-            Write-Host "拡張子 '$ext' の OpenWithProgIds には '$progId' が既に登録されています。"
-        }
-
-        if ($setAsDefault) {
-            if ($result.DefaultSet) {
-                Write-Host "'$ext' の既定プログラムとして '$progId' を設定しました。"
-            } elseif ($result.ExistingDefault -eq '') {
-                Write-Host "'$ext' には既定プログラムとして空の値が設定されているため、上書きしませんでした。"
-            } else {
-                Write-Host "'$ext' には既に既定プログラム '$($result.ExistingDefault)' が設定されているため、上書きしませんでした。"
-            }
-        }
-    } catch {
-        $failures++
-        Write-Warning "拡張子 '$ext' の登録に失敗しました: $($_.Exception.Message)"
-    }
-}
-
-# 4. エクスプローラーへの反映通知
-Send-ShellChangeNotification
-
-if ($failures -gt 0) {
-    Write-Host ''
-    Write-Warning "$failures 件の拡張子で登録に失敗しました。上記の警告を確認してください。"
-    exit 1
-}
-
-Write-Host ''
-Write-Host '===================================================================='
-Write-Host 'Hirake の関連付け登録が完了しました。'
-Write-Host 'Windows 11 では初回のみ、.md ファイルを右クリック →'
-Write-Host '「プログラムから開く」→「別のプログラムを選択」→'
-Write-Host 'Hirake を選び「常にこのアプリを使う」にチェックを入れる操作が'
-Write-Host '必要な場合があります。'
-Write-Host '===================================================================='
+exit $presentation.ExitCode
