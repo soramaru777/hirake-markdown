@@ -372,6 +372,519 @@ function Unregister-HirakeExtension {
     }
 }
 
+# ---- 制御フロー層 ---------------------------------------------------
+#
+# register.ps1 / unregister.ps1 の「手順そのもの」をここへ置く。
+# スクリプト側に残すのは、引数の解決・メッセージ表示・終了コードだけ。
+#
+# 対象（ProgId・スキーム・拡張子）を引数にしているのは、テストから使い捨ての
+# 対象を渡して本番と同一の順序・同一の中止判断を実行できるようにするため。
+# 関数単体がすべて正しくても、呼ぶ順序が間違っていれば壊れる。実際に #41 では
+# 「Unknown の中止判定が拡張子処理より後にあり、拡張子側だけ先に変更されてから
+# 失敗する」不具合が、関数単体テスト 89 件をすべて通過したまま残っていた。
+#
+# メッセージは出さず、何が起きたかを戻り値で返す（このファイル全体の契約）。
+# シェル通知も行わない（使い捨て対象を扱うテストで呼ぶ理由がないため、
+# 呼び出し側が担当する）。
+
+# 対象キー同士が衝突していないことを確認する（書き込みの前に行うこと）。
+# 書式が正しくても、ProgId キーとスキームキーが同じ、スキーム名が拡張子と同じ、
+# 拡張子が重複、といった組み合わせは同じキーを別の役割で二重に扱うことになり、
+# 後半の処理が前半の結果を壊す。呼び出し側の誤りなので例外にする。
+function Assert-DistinctHirakeTargets {
+    param(
+        [Parameter(Mandatory)][string]$ProgIdKey,
+        [Parameter(Mandatory)][string]$SchemeKey,
+        [Parameter(Mandatory)][string[]]$Extensions
+    )
+
+    $seen = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+
+    foreach ($ext in $Extensions) {
+        if (-not $seen.Add($ext)) {
+            throw "-Extensions に同じ拡張子が複数指定されています: $ext"
+        }
+    }
+
+    $keys = @($ProgIdKey, $SchemeKey) + ($Extensions | ForEach-Object { "HKCU:\Software\Classes\$_" })
+    $seenKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($key in $keys) {
+        if (-not $seenKeys.Add($key)) {
+            throw "対象のキーが重複しています（ProgId・スキーム・拡張子は互いに異なる必要があります）: $key"
+        }
+    }
+}
+
+# 登録の制御フロー。
+# 戻り値: Status / AbortedTarget / AbortReason / MayHaveModified / ProgIdWritten /
+#         SchemeWritten / Extensions / FailureCount
+#   Status:
+#     'Completed'                  すべて成功
+#     'CompletedWithFailures'      拡張子の一部が失敗（コアは成功）
+#     'AbortedInvalidExeName'      レジストリ未変更で中止
+#     'AbortedNotOwned'            レジストリ未変更で中止
+#     'CoreFailedPartiallyApplied' コア登録の途中で失敗（変更済みの可能性あり）
+#
+#   Aborted* は「レジストリを 1 つも変更していない」ことを意味する。
+#   途中まで適用された失敗は Aborted* とは呼ばない（MayHaveModified も参照）。
+function Invoke-HirakeRegister {
+    param(
+        [Parameter(Mandatory)][string]$ExePath,
+        [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9._-]+$')][string]$ProgId,
+        [Parameter(Mandatory)][ValidatePattern('^HKCU:\\Software\\Classes\\[A-Za-z0-9._-]+$')][string]$SchemeKey,
+        # 各要素に適用される。呼び出し側の書式誤りは「失敗 1 件」ではなく
+        # 例外にする（プログラミングエラーを実行時の失敗に化けさせない）。
+        # 空配列は Mandatory が拒否する（コアだけの登録・解除は用途が無い）。
+        [Parameter(Mandatory)][ValidateNotNullOrEmpty()][ValidatePattern('^\.[A-Za-z0-9]+$')][string[]]$Extensions,
+        [string]$DefaultExtension,
+        [ValidatePattern('^[A-Za-z0-9._-]+\.exe$')][string]$ExpectedExeName = 'Hirake.exe',
+        [string]$ProgIdDisplayName = 'Markdown Document',
+        [string]$SchemeDisplayName = 'URL:Hirake Protocol'
+    )
+
+    # 既定にする拡張子は、登録する拡張子に含まれていなければならない。
+    # 黙って「既定を設定しない」で通すと、綴り誤りが実行時まで表に出ない。
+    if ($DefaultExtension -and $Extensions -notcontains $DefaultExtension) {
+        throw "-DefaultExtension は -Extensions に含まれている必要があります: $DefaultExtension"
+    }
+
+    $progIdKey = "HKCU:\Software\Classes\$ProgId"
+    Assert-DistinctHirakeTargets -ProgIdKey $progIdKey -SchemeKey $SchemeKey -Extensions $Extensions
+
+    $openCommand = "`"$ExePath`" `"%1`""
+
+    $result = [pscustomobject]@{
+        Status        = 'Completed'
+        AbortedTarget = $null
+        AbortReason   = $null
+        # 書き込みフェーズへ入ったか。「実際に変更した」ではなく
+        # 「変更した可能性がある」を表す（最初の書き込みが権限エラーで
+        #  何も変えずに失敗した場合も $true になる。安全側に倒している）。
+        MayHaveModified = $false
+        ProgIdWritten = $false
+        SchemeWritten = $false
+        Extensions    = @()
+        FailureCount  = 0
+    }
+
+    # 1. 実行ファイル名の検証。
+    #    解除側は shell\open\command の実行ファイル名で「Hirake が登録したキーか」を
+    #    判定するため、別名の exe を登録できると解除できない状態を作れる。
+    if ((Split-Path -Path $ExePath -Leaf) -ne $ExpectedExeName) {
+        $result.Status = 'AbortedInvalidExeName'
+        $result.AbortedTarget = $ExePath
+        return $result
+    }
+
+    # 2. Hirake 名義のキーが別アプリに使われていないか、書き込む前に全部確認する。
+    foreach ($path in @($progIdKey, $SchemeKey)) {
+        if ((Test-HirakeOwnedKey -Path $path -ExeName $ExpectedExeName) -eq 'NotOwned') {
+            $result.Status = 'AbortedNotOwned'
+            $result.AbortedTarget = $path
+            return $result
+        }
+    }
+
+    # 3. ProgId と URL プロトコルの登録。
+    #    キーは作り直さず値だけを上書きする（削除→再作成の間に失敗すると
+    #    元の設定が失われ、ユーザーが追加した verb も巻き添えになる）。
+    #    ここで失敗したら拡張子側には手を付けない（参照先の無い
+    #    OpenWithProgIds エントリを作らないため）。
+    try {
+        # ここから先は 1 行でも成功すればレジストリが変わる。
+        # 途中で失敗しても巻き戻せない（他プロセスとの競合があり、
+        # レジストリに完全なトランザクションを張れない）ため、
+        # 「変更済みかもしれない」ことを MayHaveModified で明示する。
+        $result.MayHaveModified = $true
+
+        Initialize-RegistryKey -Path $progIdKey
+        Set-ItemProperty -Path $progIdKey -Name '(default)' -Value $ProgIdDisplayName
+
+        Initialize-RegistryKey -Path "$progIdKey\DefaultIcon"
+        Set-ItemProperty -Path "$progIdKey\DefaultIcon" -Name '(default)' -Value "$ExePath,0"
+
+        Initialize-RegistryKey -Path "$progIdKey\shell\open\command"
+        Set-ItemProperty -Path "$progIdKey\shell\open\command" -Name '(default)' -Value $openCommand
+
+        $result.ProgIdWritten = $true
+
+        # 'URL Protocol' は値が空文字のまま「プロパティが存在すること」に意味がある。
+        Initialize-RegistryKey -Path $SchemeKey
+        Set-ItemProperty -Path $SchemeKey -Name '(default)' -Value $SchemeDisplayName
+        New-ItemProperty -Path $SchemeKey -Name 'URL Protocol' -Value '' -PropertyType String -Force | Out-Null
+
+        Initialize-RegistryKey -Path "$SchemeKey\DefaultIcon"
+        Set-ItemProperty -Path "$SchemeKey\DefaultIcon" -Name '(default)' -Value "$ExePath,0"
+
+        Initialize-RegistryKey -Path "$SchemeKey\shell\open\command"
+        Set-ItemProperty -Path "$SchemeKey\shell\open\command" -Name '(default)' -Value $openCommand
+
+        $result.SchemeWritten = $true
+    } catch {
+        # 「中止」ではなく「途中まで適用された失敗」。名前でそれを表す
+        # （Aborted* は「レジストリを 1 つも変更していない」ことを意味する）。
+        $result.Status = 'CoreFailedPartiallyApplied'
+        $result.AbortReason = $_.Exception.Message
+        return $result
+    }
+
+    # 4. 拡張子の登録。1 件の失敗で残りを止めない。
+    $extensionResults = @()
+    foreach ($ext in $Extensions) {
+        $setAsDefault = ($ext -eq $DefaultExtension)
+        try {
+            $registered = Register-HirakeExtension -Extension $ext -ProgId $ProgId -SetAsDefault:$setAsDefault
+            $extensionResults += [pscustomobject]@{
+                Extension       = $ext
+                Succeeded       = $true
+                Error           = $null
+                IsDefault       = $setAsDefault
+                Written         = $registered.Written
+                DefaultSet      = $registered.DefaultSet
+                ExistingDefault = $registered.ExistingDefault
+            }
+        } catch {
+            $result.FailureCount++
+            $extensionResults += [pscustomobject]@{
+                Extension       = $ext
+                Succeeded       = $false
+                Error           = $_.Exception.Message
+                IsDefault       = $setAsDefault
+                Written         = $false
+                DefaultSet      = $false
+                ExistingDefault = $null
+            }
+        }
+    }
+
+    # 拡張子が 1 件のときも配列のままにする（呼び出し側が索引・件数で扱うため）。
+    $result.Extensions = @($extensionResults)
+    if ($result.FailureCount -gt 0) {
+        $result.Status = 'CompletedWithFailures'
+    }
+    return $result
+}
+
+# 解除の制御フロー。
+# 戻り値: Status / AbortedTarget / Extensions / Targets / SkippedTargets / FailureCount
+#   Status: 'Completed' / 'CompletedWithFailures' / 'AbortedNotOwned' / 'AbortedUnknown'
+function Invoke-HirakeUnregister {
+    param(
+        [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9._-]+$')][string]$ProgId,
+        [Parameter(Mandatory)][ValidatePattern('^HKCU:\\Software\\Classes\\[A-Za-z0-9._-]+$')][string]$SchemeKey,
+        # 各要素に適用される。呼び出し側の書式誤りは「失敗 1 件」ではなく
+        # 例外にする（プログラミングエラーを実行時の失敗に化けさせない）。
+        # 空配列は Mandatory が拒否する（コアだけの登録・解除は用途が無い）。
+        [Parameter(Mandatory)][ValidateNotNullOrEmpty()][ValidatePattern('^\.[A-Za-z0-9]+$')][string[]]$Extensions,
+        [ValidatePattern('^[A-Za-z0-9._-]+\.exe$')][string]$ExpectedExeName = 'Hirake.exe'
+    )
+
+    $progIdKey = "HKCU:\Software\Classes\$ProgId"
+    Assert-DistinctHirakeTargets -ProgIdKey $progIdKey -SchemeKey $SchemeKey -Extensions $Extensions
+
+    $result = [pscustomobject]@{
+        Status         = 'Completed'
+        AbortedTarget  = $null
+        Extensions     = @()
+        Targets        = @()
+        SkippedTargets = $false
+        FailureCount   = 0
+    }
+
+    # 1. Hirake 名義のキーの状態を、拡張子側に手を付ける前にすべて確認する。
+    #    後から気付く形にすると、削除できないキーを参照したままの
+    #    OpenWithProgIds エントリだけが先に消える中途半端な解除になる。
+    foreach ($path in @($progIdKey, $SchemeKey)) {
+        switch (Test-HirakeOwnedKey -Path $path -ExeName $ExpectedExeName) {
+            'NotOwned' {
+                $result.Status = 'AbortedNotOwned'
+                $result.AbortedTarget = $path
+                return $result
+            }
+            'Unknown' {
+                $result.Status = 'AbortedUnknown'
+                $result.AbortedTarget = $path
+                return $result
+            }
+        }
+    }
+
+    # 2. 拡張子の解除。
+    $extensionResults = @()
+    foreach ($ext in $Extensions) {
+        try {
+            $removed = Unregister-HirakeExtension -Extension $ext -ProgId $ProgId
+            $extensionResults += [pscustomobject]@{
+                Extension          = $ext
+                Succeeded          = $true
+                Error              = $null
+                RemovedProgId      = $removed.RemovedProgId
+                RemovedOpenWithKey = $removed.RemovedOpenWithKey
+                ExistingDefault    = $removed.ExistingDefault
+                RemovedDefault     = $removed.RemovedDefault
+                RemovedExtKey      = $removed.RemovedExtKey
+            }
+        } catch {
+            $result.FailureCount++
+            $extensionResults += [pscustomobject]@{
+                Extension          = $ext
+                Succeeded          = $false
+                Error              = $_.Exception.Message
+                RemovedProgId      = $false
+                RemovedOpenWithKey = $false
+                ExistingDefault    = $null
+                RemovedDefault     = $false
+                RemovedExtKey      = $false
+            }
+        }
+    }
+    $result.Extensions = @($extensionResults)
+
+    # 3. ProgId と URL プロトコルの削除。
+    #    拡張子側の解除に失敗している場合は、参照先だけが消えたダングリング状態を
+    #    作らないよう見送る。
+    if ($result.FailureCount -gt 0) {
+        $result.SkippedTargets = $true
+        $result.Status = 'CompletedWithFailures'
+        return $result
+    }
+
+    $targetResults = @()
+    foreach ($path in @($progIdKey, $SchemeKey)) {
+        try {
+            $status = Remove-HirakeOwnedKey -Path $path -ExeName $ExpectedExeName
+            if ($status -notin @('Removed', 'NotFound')) {
+                $result.FailureCount++
+            }
+            $targetResults += [pscustomobject]@{
+                Path   = $path
+                Status = $status
+                Error  = $null
+            }
+        } catch {
+            $result.FailureCount++
+            $targetResults += [pscustomobject]@{
+                Path   = $path
+                Status = 'Error'
+                Error  = $_.Exception.Message
+            }
+        }
+    }
+
+    $result.Targets = @($targetResults)
+    if ($result.FailureCount -gt 0) {
+        $result.Status = 'CompletedWithFailures'
+    }
+    return $result
+}
+
+# ---- 表示の組み立て -------------------------------------------------
+#
+# 「何を表示するか」と「終了コードをいくつにするか」も制御フローの一部であり、
+# 退行が起きうる。ここでは組み立てるだけで表示はしない（このファイルの契約は
+# 変わらない）。スクリプトは結果を受け取って書き出すだけになる。
+#
+# 戻り値: Lines（Stream = 'Host'|'Warning'|'Error' と Message の配列） /
+#         ExitCode / Notify（シェル通知を行うか）
+
+function New-PresentationLine {
+    param(
+        [Parameter(Mandatory)][ValidateSet('Host', 'Warning', 'Error')][string]$Stream,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Message
+    )
+    return [pscustomobject]@{ Stream = $Stream; Message = $Message }
+}
+
+# 登録結果の表示内容を組み立てる。
+function Get-HirakeRegisterPresentation {
+    param(
+        [Parameter(Mandatory)]$Result,
+        [Parameter(Mandatory)][string]$ExePath,
+        [Parameter(Mandatory)][string]$ProgId,
+        [Parameter(Mandatory)][string]$SchemeKey,
+        [Parameter(Mandatory)][string]$ExpectedExeName
+    )
+
+    $lines = @()
+
+    if ($Result.Status -eq 'AbortedInvalidExeName') {
+        $lines += New-PresentationLine -Stream Error -Message `
+            "'$ExpectedExeName' 以外の実行ファイルは登録できません（unregister.ps1 が解除できなくなるため）: $($Result.AbortedTarget)"
+        return [pscustomobject]@{ Lines = $lines; ExitCode = 1; Notify = $false }
+    }
+
+    # 表示順は従来どおり（exe 名の検証 → 検出メッセージ → 所有権の中止）。
+    $lines += New-PresentationLine -Stream Host -Message "Hirake.exe を検出しました: $ExePath"
+
+    if ($Result.Status -eq 'AbortedNotOwned') {
+        $label = if ($Result.AbortedTarget -eq $SchemeKey) { "URL プロトコル 'hirake://'" } else { "ProgId '$ProgId'" }
+        $lines += New-PresentationLine -Stream Error -Message `
+            "$label のキーは Hirake 以外のプログラムが使用しているため、登録を中止しました: $($Result.AbortedTarget)"
+        return [pscustomobject]@{ Lines = $lines; ExitCode = 1; Notify = $false }
+    }
+
+    if ($Result.ProgIdWritten) {
+        $lines += New-PresentationLine -Stream Host -Message "ProgId '$ProgId' を登録しました。"
+    }
+    if ($Result.SchemeWritten) {
+        $lines += New-PresentationLine -Stream Host -Message "URL プロトコル 'hirake://' を登録しました。"
+    }
+
+    if ($Result.Status -eq 'CoreFailedPartiallyApplied') {
+        $lines += New-PresentationLine -Stream Warning -Message "ProgId / URL プロトコルの登録に失敗しました: $($Result.AbortReason)"
+        $lines += New-PresentationLine -Stream Warning -Message '一部だけ書き込まれている可能性があります。原因を解消してから register.ps1 を再実行してください。'
+        # 途中まで書き込まれている可能性があるなら、エクスプローラーへは通知する。
+        # 通知しないと、中途半端に変わった関連付けが古いまま表示され続ける。
+        return [pscustomobject]@{ Lines = $lines; ExitCode = 1; Notify = [bool]$Result.MayHaveModified }
+    }
+
+    foreach ($ext in @($Result.Extensions)) {
+        if (-not $ext.Succeeded) {
+            $lines += New-PresentationLine -Stream Warning -Message "拡張子 '$($ext.Extension)' の登録に失敗しました: $($ext.Error)"
+            continue
+        }
+
+        if ($ext.Written) {
+            $lines += New-PresentationLine -Stream Host -Message "拡張子 '$($ext.Extension)' の OpenWithProgIds に '$ProgId' を登録しました。"
+        } else {
+            $lines += New-PresentationLine -Stream Host -Message "拡張子 '$($ext.Extension)' の OpenWithProgIds には '$ProgId' が既に登録されています。"
+        }
+
+        if ($ext.IsDefault) {
+            if ($ext.DefaultSet) {
+                $lines += New-PresentationLine -Stream Host -Message "'$($ext.Extension)' の既定プログラムとして '$ProgId' を設定しました。"
+            } elseif ($ext.ExistingDefault -eq '') {
+                $lines += New-PresentationLine -Stream Host -Message "'$($ext.Extension)' には既定プログラムとして空の値が設定されているため、上書きしませんでした。"
+            } else {
+                $lines += New-PresentationLine -Stream Host -Message "'$($ext.Extension)' には既に既定プログラム '$($ext.ExistingDefault)' が設定されているため、上書きしませんでした。"
+            }
+        }
+    }
+
+    if ($Result.FailureCount -gt 0) {
+        $lines += New-PresentationLine -Stream Host -Message ''
+        $lines += New-PresentationLine -Stream Warning -Message "$($Result.FailureCount) 件の拡張子で登録に失敗しました。上記の警告を確認してください。"
+        return [pscustomobject]@{ Lines = $lines; ExitCode = 1; Notify = $true }
+    }
+
+    foreach ($message in @(
+            '',
+            '====================================================================',
+            'Hirake の関連付け登録が完了しました。',
+            'Windows 11 では初回のみ、.md ファイルを右クリック →',
+            '「プログラムから開く」→「別のプログラムを選択」→',
+            'Hirake を選び「常にこのアプリを使う」にチェックを入れる操作が',
+            '必要な場合があります。',
+            '====================================================================')) {
+        $lines += New-PresentationLine -Stream Host -Message $message
+    }
+
+    return [pscustomobject]@{ Lines = $lines; ExitCode = 0; Notify = $true }
+}
+
+# 解除結果の表示内容を組み立てる。
+function Get-HirakeUnregisterPresentation {
+    param(
+        [Parameter(Mandatory)]$Result,
+        [Parameter(Mandatory)][string]$ProgId,
+        [Parameter(Mandatory)][string]$SchemeKey
+    )
+
+    $lines = @()
+    $labelOf = {
+        param($path)
+        if ($path -eq $SchemeKey) { "URL プロトコル 'hirake://'" } else { "ProgId '$ProgId'" }
+    }
+
+    if ($Result.Status -eq 'AbortedNotOwned') {
+        $lines += New-PresentationLine -Stream Error -Message `
+            "$(& $labelOf $Result.AbortedTarget) のキーは Hirake 以外のプログラムが使用しているため、解除を中止しました（レジストリは変更していません）: $($Result.AbortedTarget)"
+        return [pscustomobject]@{ Lines = $lines; ExitCode = 1; Notify = $false }
+    }
+
+    if ($Result.Status -eq 'AbortedUnknown') {
+        $lines += New-PresentationLine -Stream Error -Message `
+            "$(& $labelOf $Result.AbortedTarget) のキーは shell\open\command が無く由来を判定できないため、解除を中止しました（レジストリは変更していません）。register.ps1 を実行して登録を修復してから、再度 unregister.ps1 を実行してください: $($Result.AbortedTarget)"
+        return [pscustomobject]@{ Lines = $lines; ExitCode = 1; Notify = $false }
+    }
+
+    foreach ($ext in @($Result.Extensions)) {
+        if (-not $ext.Succeeded) {
+            $lines += New-PresentationLine -Stream Warning -Message "拡張子 '$($ext.Extension)' の解除に失敗しました: $($ext.Error)"
+            continue
+        }
+
+        if ($ext.RemovedProgId) {
+            $lines += New-PresentationLine -Stream Host -Message "拡張子 '$($ext.Extension)' の OpenWithProgIds から '$ProgId' を削除しました。"
+        }
+
+        if ($ext.RemovedDefault) {
+            $lines += New-PresentationLine -Stream Host -Message "'$($ext.Extension)' の既定プログラム設定（'$ProgId'）を削除しました。"
+        } elseif ($ext.ExistingDefault) {
+            $lines += New-PresentationLine -Stream Host -Message "'$($ext.Extension)' の既定プログラムは '$($ext.ExistingDefault)' のままです（Hirake が設定したものではないため削除しません）。"
+        }
+
+        if ($ext.RemovedExtKey) {
+            $lines += New-PresentationLine -Stream Host -Message "空になった拡張子キー '$($ext.Extension)' を削除しました。"
+        }
+    }
+
+    if ($Result.SkippedTargets) {
+        $lines += New-PresentationLine -Stream Warning -Message `
+            "拡張子の解除に失敗したため、ProgId '$ProgId' と URL プロトコル 'hirake://' は削除しません（拡張子側に参照が残るため）。"
+    } else {
+        foreach ($target in @($Result.Targets)) {
+            $label = & $labelOf $target.Path
+            switch ($target.Status) {
+                'Removed'  { $lines += New-PresentationLine -Stream Host -Message "$label を削除しました。" }
+                'NotFound' { $lines += New-PresentationLine -Stream Host -Message "$label は登録されていませんでした。" }
+                'Unknown'  {
+                    $lines += New-PresentationLine -Stream Warning -Message `
+                        "$label は shell\open\command が無く由来を判定できないため削除しませんでした。register.ps1 を実行してから再度 unregister.ps1 を実行してください: $($target.Path)"
+                }
+                'NotOwned' {
+                    $lines += New-PresentationLine -Stream Warning -Message `
+                        "$label は Hirake 以外のプログラムを指しているため削除しませんでした。"
+                }
+                'Error' {
+                    $lines += New-PresentationLine -Stream Warning -Message "$label を削除できませんでした: $($target.Error)"
+                }
+            }
+        }
+    }
+
+    if ($Result.FailureCount -gt 0) {
+        $lines += New-PresentationLine -Stream Host -Message ''
+        $lines += New-PresentationLine -Stream Warning -Message "$($Result.FailureCount) 件の処理に失敗しました。上記の警告を確認してください。"
+        return [pscustomobject]@{ Lines = $lines; ExitCode = 1; Notify = $true }
+    }
+
+    foreach ($message in @(
+            '',
+            '====================================================================',
+            'Hirake の関連付け解除が完了しました。',
+            '====================================================================')) {
+        $lines += New-PresentationLine -Stream Host -Message $message
+    }
+
+    return [pscustomobject]@{ Lines = $lines; ExitCode = 0; Notify = $true }
+}
+
+# 組み立てた表示内容を実際に書き出す。
+function Write-HirakePresentation {
+    param([Parameter(Mandatory)]$Presentation)
+
+    foreach ($line in @($Presentation.Lines)) {
+        switch ($line.Stream) {
+            'Host'    { Write-Host $line.Message }
+            'Warning' { Write-Warning $line.Message }
+            'Error'   { Write-Error $line.Message }
+        }
+    }
+}
+
+# ---- シェル通知 -----------------------------------------------------
+
 # SHChangeNotify を P/Invoke で呼び出し、エクスプローラーに関連付け変更を通知する。
 function Send-ShellChangeNotification {
     if (-not ('Hirake.NativeMethods' -as [type])) {
