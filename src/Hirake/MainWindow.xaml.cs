@@ -62,8 +62,9 @@ public partial class MainWindow : Window, IDocumentTabHost
         // 保存済みのサイドバー表示状態を復元する（ツリー内容はタブ確定時に構築する）。
         SetSidebarVisible(SettingsStore.Instance.SidebarVisible, persist: false);
 
-        // Theme="auto" のとき OS のアプリテーマ変更へ追従するために購読する。
-        SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
+        // OS のアプリテーマ変更の購読は WindowManager が 1 か所で行う
+        // （ウィンドウごとに購読すると枚数分だけ購読が増える。静的イベントのため
+        //  解除漏れがそのままリークになる）。
     }
 
     // ---- ファイルを開く -----------------------------------------------
@@ -168,7 +169,39 @@ public partial class MainWindow : Window, IDocumentTabHost
             return;
         }
 
-        string fullRoot = Path.GetFullPath(root);
+        OpenStructureForRoot(root);
+    }
+
+    /// <summary>
+    /// 仮想タブの起点として使えるフォルダか。使える場合は正規化したパスを返す。
+    /// 仮想タブは配下を再帰的に走査するため、生成の入口でまとめて検査する
+    /// （呼び出し元が増えたときに検査漏れが再発しないように）。
+    /// </summary>
+    private static string? ResolveVirtualTabRoot(string root)
+    {
+        try
+        {
+            string full = Path.GetFullPath(root);
+            if (HirakeUri.IsRemoteOrUncFolder(full) || !FileTreeItem.IsSafeTraversalRoot(full))
+            {
+                return null;
+            }
+            return full;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>指定フォルダで構造クエリビューを開く（既にあればアクティブ化）。</summary>
+    private void OpenStructureForRoot(string root)
+    {
+        if (ResolveVirtualTabRoot(root) is not string fullRoot)
+        {
+            return;
+        }
+
         var existing = Tabs.OfType<StructureQueryTab>().FirstOrDefault(
             t => string.Equals(t.RootFolder, fullRoot, StringComparison.OrdinalIgnoreCase));
         if (existing != null)
@@ -232,7 +265,17 @@ public partial class MainWindow : Window, IDocumentTabHost
             return;
         }
 
-        string fullRoot = Path.GetFullPath(root);
+        OpenFingerprintForRoot(root);
+    }
+
+    /// <summary>指定フォルダで文書指紋ビューを開く（既にあればアクティブ化）。</summary>
+    private void OpenFingerprintForRoot(string root)
+    {
+        if (ResolveVirtualTabRoot(root) is not string fullRoot)
+        {
+            return;
+        }
+
         var existing = Tabs.OfType<FingerprintTab>().FirstOrDefault(
             t => string.Equals(t.RootFolder, fullRoot, StringComparison.OrdinalIgnoreCase));
         if (existing != null)
@@ -293,7 +336,17 @@ public partial class MainWindow : Window, IDocumentTabHost
             return;
         }
 
-        string fullRoot = Path.GetFullPath(root);
+        OpenStatsForRoot(root);
+    }
+
+    /// <summary>指定フォルダで統計ダッシュボードを開く（既にあればアクティブ化）。</summary>
+    private void OpenStatsForRoot(string root)
+    {
+        if (ResolveVirtualTabRoot(root) is not string fullRoot)
+        {
+            return;
+        }
+
         var existing = Tabs.OfType<StatsTab>().FirstOrDefault(
             t => string.Equals(t.RootFolder, fullRoot, StringComparison.OrdinalIgnoreCase));
         if (existing != null)
@@ -365,7 +418,21 @@ public partial class MainWindow : Window, IDocumentTabHost
             return;
         }
 
-        string fullRoot = LinkGraphService.FindWorkspaceRoot(root);
+        OpenCanvasForRoot(LinkGraphService.FindWorkspaceRoot(root), view: null, overview: overview);
+    }
+
+    /// <summary>
+    /// 指定ルートでキャンバスを開く（既にあればアクティブ化）。
+    /// view を渡すと、保存済みのビューポート（パン位置とズーム率）で表示する。
+    /// ノードの配置は CanvasLayoutStore の共有値をそのまま使う。
+    /// </summary>
+    private void OpenCanvasForRoot(string root, CanvasViewState? view, bool overview = false)
+    {
+        if (ResolveVirtualTabRoot(root) is not string fullRoot)
+        {
+            return;
+        }
+
         var existing = Tabs.OfType<CanvasTab>().FirstOrDefault(
             t => string.Equals(t.RootFolder, fullRoot, StringComparison.OrdinalIgnoreCase));
         if (existing != null)
@@ -375,10 +442,18 @@ public partial class MainWindow : Window, IDocumentTabHost
             {
                 existing.ShowOverview();
             }
+            else if (view.IsValid())
+            {
+                existing.ApplyView(view!);
+            }
             return;
         }
 
         var tab = new CanvasTab(fullRoot, this, _assetsDirectory, _tempDirectory, overview);
+        if (!overview && view.IsValid())
+        {
+            tab.SetInitialView(view!);
+        }
         tab.WebView.Visibility = Visibility.Collapsed;
         WebViewHost.Children.Add(tab.WebView);
         Tabs.Add(tab);
@@ -753,11 +828,19 @@ public partial class MainWindow : Window, IDocumentTabHost
                     OpenCanvasView();
                     e.Handled = true;
                     return;
+                case Key.W:
+                    ToggleWorkspacePopup();
+                    e.Handled = true;
+                    return;
             }
         }
 
         switch (e.Key)
         {
+            case Key.N:
+                OpenNewWindow();
+                e.Handled = true;
+                break;
             case Key.B:
                 ToggleSidebar();
                 e.Handled = true;
@@ -931,8 +1014,20 @@ public partial class MainWindow : Window, IDocumentTabHost
 
     public void ShortcutToggleCanvasView() => OpenCanvasView();
 
+    public void ShortcutToggleWorkspaceMenu() => ToggleWorkspacePopup();
+
+    public void ShortcutNewWindow() => OpenNewWindow();
+
     /// <summary>あるタブでズームが変わったら、他の全タブへ同じ倍率を反映する。</summary>
     public void OnTabZoomChanged(DocumentTab source, double zoomFactor)
+    {
+        // ズーム倍率はアプリ全体で 1 つ。ウィンドウ内だけに反映すると、
+        // 同じ設定を共有しているのにウィンドウごとに表示倍率が分裂する。
+        WindowManager.Instance.ApplyZoomToAll(source, zoomFactor);
+    }
+
+    /// <summary>WindowManager からズーム反映を要求されたときの入口。</summary>
+    public void ApplyZoomFromHost(DocumentTab source, double zoomFactor)
     {
         if (_applyingZoom)
         {
@@ -1567,95 +1662,500 @@ public partial class MainWindow : Window, IDocumentTabHost
         ThemeButton.ToolTip = $"テーマ: {label} (Ctrl+Shift+D)";
     }
 
-    /// <summary>OS のアプリテーマ変更に追従する（Theme="auto" のときのみ実効テーマを再評価）。</summary>
-    private void OnUserPreferenceChanged(object sender, UserPreferenceChangedEventArgs e)
+    // ---- セッション復元 -----------------------------------------------
+
+    /// <summary>
+    /// ウィンドウ記述子からタブを復元する。セッション復元とワークスペース復元は
+    /// どちらもこの 1 本の経路を通る（片方だけ仮想タブに対応していない状態を作らないため）。
+    /// 復元できない記述子はその 1 件だけ捨て、残りは開く。
+    /// </summary>
+    public void RestoreWindow(WindowDescriptor descriptor)
     {
-        if (e.Category != UserPreferenceCategory.General)
+        if (descriptor?.Tabs == null)
         {
             return;
         }
 
-        // 別スレッドから来る可能性があるため UI スレッドへ戻す。
-        Dispatcher.BeginInvoke(() =>
+        // ワークスペースが持つスクロール位置を先に反映しておく（決定事項 2）。
+        // タブ生成時の既存の復元経路（SettingsStore.GetScrollPosition）がそのまま
+        // この値を読むため、タブ側へ新しい引数を通す必要がない。
+        // 値が無いファイルはグローバル値のままとなり、自然にフォールバックする。
+        ApplyWorkspaceScroll();
+
+        // 復元できなかった記述子があると索引がずれるため、
+        // 「記述子の索引 → 実際に開いたタブ」の対応を控える。
+        DocumentTab? activeTab = null;
+
+        for (int i = 0; i < descriptor.Tabs.Count; i++)
         {
-            if (string.Equals(SettingsStore.Instance.Theme, "auto", StringComparison.OrdinalIgnoreCase))
+            var tab = descriptor.Tabs[i];
+            try
             {
-                ApplyEffectiveTheme();
+                if (tab == null || !tab.CanRestore())
+                {
+                    continue;
+                }
+
+                int before = Tabs.Count;
+
+                switch (tab.Kind)
+                {
+                    case TabKinds.Document:
+                        OpenFile(tab.Path);
+                        break;
+                    case TabKinds.Canvas:
+                        OpenCanvasForRoot(tab.Path, tab.View);
+                        break;
+                    case TabKinds.Structure:
+                        OpenStructureForRoot(tab.Path);
+                        break;
+                    case TabKinds.Fingerprint:
+                        OpenFingerprintForRoot(tab.Path);
+                        break;
+                    case TabKinds.Stats:
+                        OpenStatsForRoot(tab.Path);
+                        break;
+                }
+
+                // この記述子で開かれた（または既存だった）タブを覚えておく。
+                if (i == descriptor.ActiveIndex)
+                {
+                    activeTab = Tabs.Count > before
+                        ? Tabs[^1]
+                        : TabList.SelectedItem as DocumentTab;
+                }
             }
-        });
+            catch
+            {
+                // 個別タブの復元失敗は無視する。
+            }
+        }
+
+        // アクティブタブは「記述子が指していたタブそのもの」を選ぶ。
+        // 索引でクランプすると、途中の記述子が捨てられたときに別のタブが選ばれる。
+        if (activeTab != null && Tabs.Contains(activeTab))
+        {
+            TabList.SelectedItem = activeTab;
+        }
+        else if (Tabs.Count > 0)
+        {
+            TabList.SelectedIndex = 0;
+        }
     }
 
-    // ---- セッション復元 -----------------------------------------------
+    // 閉じる直前に確定させた構成。Closed イベントの時点ではタブを破棄済みのため、
+    // WindowManager から呼ばれる CaptureWindow はこちらを返す必要がある。
+    private WindowDescriptor? _finalDescriptor;
 
-    /// <summary>前回セッションのタブ（存在するファイルのみ）を開き、前回アクティブを復元する。</summary>
-    public void RestoreSession()
+    /// <summary>現在のタブ構成をウィンドウ記述子として取り出す。</summary>
+    public WindowDescriptor CaptureWindow()
     {
-        var sessionTabs = SettingsStore.Instance.SessionTabs;
-        string? active = SettingsStore.Instance.SessionActiveTab;
+        if (_finalDescriptor != null)
+        {
+            return _finalDescriptor;
+        }
 
-        foreach (var path in sessionTabs)
+        var tabs = new List<TabDescriptor>();
+        int activeIndex = 0;
+
+        foreach (var tab in Tabs)
+        {
+            var descriptor = TabDescriptor.FromTab(tab, IsClipboardTempFile);
+            if (descriptor == null)
+            {
+                continue;
+            }
+
+            if (ReferenceEquals(TabList.SelectedItem, tab))
+            {
+                activeIndex = tabs.Count;
+            }
+            tabs.Add(descriptor);
+        }
+
+        return new WindowDescriptor
+        {
+            WorkspaceId = WorkspaceId,
+            Tabs = tabs,
+            ActiveIndex = activeIndex,
+            Bounds = CaptureBounds(),
+        };
+    }
+
+    /// <summary>
+    /// このウィンドウが開いている名前付きワークスペースの ID（無名なら null）。
+    /// 設定は <see cref="WindowManager.TryAttachWorkspace"/> 経由でのみ行う
+    /// （一意性を 1 か所で保証するため）。
+    /// </summary>
+    public string? WorkspaceId { get; private set; }
+
+    /// <summary>WindowManager だけが使う所有権の設定口。</summary>
+    internal void SetWorkspaceId(string? id) => WorkspaceId = id;
+
+    /// <summary>
+    /// ワークスペースの復元先として再利用してよいか（タブが無く、無名のウィンドウ）。
+    /// </summary>
+    internal bool IsReusableForWorkspace => Tabs.Count == 0 && string.IsNullOrEmpty(WorkspaceId);
+
+    /// <summary>指定ファイルのタブを開いているか（URI・二重起動転送の宛先判定に使う）。</summary>
+    public bool HasTabForFile(string fullPath)
+    {
+        if (string.IsNullOrEmpty(fullPath))
+        {
+            return false;
+        }
+
+        return Tabs.Any(t => t.GetType() == typeof(DocumentTab) &&
+                             string.Equals(t.FilePath, fullPath, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// 保存済みのウィンドウ位置・サイズを適用する。現在のモニタ構成に収まらない場合は
+    /// 既定位置のままにする（モニタを外した状態で復元して画面外に出るのを防ぐ）。
+    /// </summary>
+    public void ApplyBounds(WindowBounds? bounds)
+    {
+        if (bounds is not { IsValid: true })
+        {
+            return;
+        }
+
+        if (!IsWithinAnyScreen(bounds))
+        {
+            return;
+        }
+
+        WindowStartupLocation = WindowStartupLocation.Manual;
+        Left = bounds.Left;
+        Top = bounds.Top;
+        Width = bounds.Width;
+        Height = bounds.Height;
+        WindowState = bounds.Maximized ? WindowState.Maximized : WindowState.Normal;
+    }
+
+    /// <summary>
+    /// 矩形の中心が仮想デスクトップの範囲内にあるか。
+    /// 端が少しはみ出す程度は許容し、モニタが減って完全に画面外になる場合だけ弾く。
+    /// </summary>
+    private static bool IsWithinAnyScreen(WindowBounds bounds)
+    {
+        try
+        {
+            double left = SystemParameters.VirtualScreenLeft;
+            double top = SystemParameters.VirtualScreenTop;
+            double right = left + SystemParameters.VirtualScreenWidth;
+            double bottom = top + SystemParameters.VirtualScreenHeight;
+
+            double centerX = bounds.Left + (bounds.Width / 2);
+            double centerY = bounds.Top + (bounds.Height / 2);
+
+            return centerX >= left && centerX <= right && centerY >= top && centerY <= bottom;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// このウィンドウが属するワークスペースのスクロール位置を設定する。
+    /// 復元時はここを優先し、無ければ SettingsStore のグローバル値へフォールバックする。
+    /// </summary>
+    public void SetWorkspaceScroll(IReadOnlyDictionary<string, double>? scroll)
+    {
+        _workspaceScroll = scroll == null
+            ? null
+            : new Dictionary<string, double>(scroll, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private Dictionary<string, double>? _workspaceScroll;
+
+    /// <summary>
+    /// ワークスペースのスクロール位置をグローバル値へ反映する。
+    /// 同じファイルを複数ウィンドウで開いた場合、グローバル値は後から動いた側で
+    /// 上書きされるが、ワークスペースは自前の値を保存するため相互に影響しない。
+    /// </summary>
+    private void ApplyWorkspaceScroll()
+    {
+        if (_workspaceScroll == null)
+        {
+            return;
+        }
+
+        foreach (var pair in _workspaceScroll)
         {
             try
             {
-                if (File.Exists(path))
-                {
-                    OpenFile(path);
-                }
+                SettingsStore.Instance.UpdateScrollPosition(pair.Key, pair.Value);
             }
             catch
             {
-                // 個別ファイルの復元失敗は無視する。
+                // 1 件の失敗で残りを止めない。
+            }
+        }
+    }
+
+    /// <summary>ワークスペース保存用に、開いている文書のスクロール位置を集める。</summary>
+    public IReadOnlyDictionary<string, double> CaptureScroll()
+    {
+        var result = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        foreach (var tab in Tabs)
+        {
+            if (tab.GetType() != typeof(DocumentTab) || string.IsNullOrEmpty(tab.FilePath))
+            {
+                continue;
+            }
+
+            double? position = SettingsStore.Instance.GetScrollPosition(tab.FilePath);
+            if (position is double value)
+            {
+                result[tab.FilePath] = value;
+            }
+        }
+        return result;
+    }
+
+    /// <summary>WindowManager からテーマ再適用を要求されたときの入口。</summary>
+    public void ApplyEffectiveThemeFromHost() => ApplyEffectiveTheme();
+
+    // ---- ワークスペース UI ---------------------------------------------
+
+    /// <summary>
+    /// ポップアップ一覧の 1 行分（表示用）。
+    /// WPF のデータバインディングは非公開型のプロパティを解決できないため public にする
+    /// （private のままだと束縛が黙って失敗し、一覧が空欄で並ぶ）。
+    /// </summary>
+    public sealed record WorkspaceRow(string Id, string Name, string TabLabel, string OpenMark);
+
+    private void WorkspaceButton_Click(object sender, RoutedEventArgs e) => ToggleWorkspacePopup();
+
+    /// <summary>ワークスペース一覧のポップアップを開閉する（Ctrl+Shift+W）。</summary>
+    public void ToggleWorkspacePopup()
+    {
+        if (WorkspacePopup.IsOpen)
+        {
+            WorkspacePopup.IsOpen = false;
+            return;
+        }
+
+        RefreshWorkspaceList();
+        WorkspacePopup.IsOpen = true;
+        WorkspaceNameBox.Focus();
+    }
+
+    private void RefreshWorkspaceList()
+    {
+        var all = WorkspaceStore.Instance.GetAll();
+
+        var rows = all.Select(w => new WorkspaceRow(
+            w.Id,
+            w.Name,
+            $"{w.Window?.Tabs?.Count ?? 0} タブ",
+            WindowManager.Instance.FindByWorkspaceId(w.Id) != null ? "●" : "○")).ToList();
+
+        WorkspaceList.ItemsSource = rows;
+        WorkspaceEmptyText.Visibility = rows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+
+        // 現在のウィンドウがワークスペースなら、その名前を入力欄の初期値にする
+        // （名前を変えずに押せば上書き保存になる）。
+        var current = WorkspaceStore.Instance.FindById(WorkspaceId);
+        WorkspaceNameBox.Text = current?.Name ?? string.Empty;
+        WorkspaceNameBox.SelectAll();
+    }
+
+    private void WorkspacePopup_Closed(object? sender, EventArgs e)
+    {
+        WorkspaceList.ItemsSource = null;
+    }
+
+    private void WorkspaceOpen_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: string id })
+        {
+            return;
+        }
+
+        WorkspacePopup.IsOpen = false;
+
+        var workspace = WorkspaceStore.Instance.FindById(id);
+        if (workspace == null)
+        {
+            return;
+        }
+
+        // 既に開いていれば前面化のみ。無ければ新しいウィンドウで開く。
+        if (WindowManager.Instance.OpenWorkspace(workspace) == null)
+        {
+            MessageBox.Show(
+                this,
+                $"同時に開けるウィンドウは {WindowManager.MaxWindows} 枚までです。",
+                "Hirake",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+    }
+
+    private void WorkspaceDelete_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: string id })
+        {
+            return;
+        }
+
+        var workspace = WorkspaceStore.Instance.FindById(id);
+        if (workspace == null)
+        {
+            return;
+        }
+
+        var answer = MessageBox.Show(
+            this,
+            $"ワークスペース「{workspace.Name}」を削除しますか？",
+            "Hirake",
+            MessageBoxButton.OKCancel,
+            MessageBoxImage.Question);
+        if (answer != MessageBoxResult.OK)
+        {
+            return;
+        }
+
+        WorkspaceStore.Instance.Delete(id);
+
+        // 削除したワークスペースを開いているウィンドウは、無名のウィンドウに戻す
+        // （閉じるときに存在しない ID へ書き戻そうとしないため）。
+        // 1 枚に限らず全ウィンドウを対象にする。
+        WindowManager.Instance.DetachWorkspace(id);
+
+        RefreshWorkspaceList();
+    }
+
+    private void WorkspaceNameBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            e.Handled = true;
+            SaveCurrentWorkspace();
+        }
+    }
+
+    private void WorkspaceSave_Click(object sender, RoutedEventArgs e) => SaveCurrentWorkspace();
+
+    private void SaveCurrentWorkspace()
+    {
+        string name = WorkspaceStore.NormalizeName(WorkspaceNameBox.Text);
+        if (name.Length == 0)
+        {
+            return;
+        }
+
+        // 別のワークスペースと同名なら上書き確認する。
+        var existing = WorkspaceStore.Instance.FindByName(name);
+        if (existing != null && !string.Equals(existing.Id, WorkspaceId, StringComparison.Ordinal))
+        {
+            // そのワークスペースを別のウィンドウが開いている場合は上書きさせない。
+            // 許すと同じ ID を 2 枚が所有し、閉じた順に自動書き戻しが競合して
+            // 古い構成が新しい構成を上書きできてしまう。
+            var owner = WindowManager.Instance.FindByWorkspaceId(existing.Id);
+            if (owner != null)
+            {
+                MessageBox.Show(
+                    this,
+                    $"ワークスペース「{name}」は別のウィンドウで開いています。\n" +
+                    "そのウィンドウで保存するか、別の名前を付けてください。",
+                    "Hirake",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+                owner.BringToFront();
+                return;
+            }
+
+            var answer = MessageBox.Show(
+                this,
+                $"ワークスペース「{name}」は既に存在します。上書きしますか？",
+                "Hirake",
+                MessageBoxButton.OKCancel,
+                MessageBoxImage.Question);
+            if (answer != MessageBoxResult.OK)
+            {
+                return;
             }
         }
 
-        if (!string.IsNullOrEmpty(active))
+        var saved = WorkspaceStore.Instance.Save(name, CaptureWindow(), CaptureScroll());
+        if (saved == null)
         {
-            try
-            {
-                string fullActive = Path.GetFullPath(active);
-                var match = Tabs.FirstOrDefault(
-                    t => string.Equals(t.FilePath, fullActive, StringComparison.OrdinalIgnoreCase));
-                if (match != null)
-                {
-                    TabList.SelectedItem = match;
-                }
-            }
-            catch
-            {
-                // アクティブタブ復元失敗は無視する。
-            }
+            MessageBox.Show(
+                this,
+                $"ワークスペースは {WorkspaceStore.MaxWorkspaces} 件までです。不要なものを削除してください。",
+                "Hirake",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
         }
+
+        // 保存したワークスペースを、このウィンドウが開いている状態にする
+        // （以後、閉じるときに自動で書き戻される）。
+        WindowManager.Instance.TryAttachWorkspace(this, saved.Id);
+        WorkspacePopup.IsOpen = false;
+    }
+
+    /// <summary>新しい空のウィンドウを開く（Ctrl+N）。</summary>
+    public void OpenNewWindow()
+    {
+        if (WindowManager.Instance.CreateWindow() == null)
+        {
+            MessageBox.Show(
+                this,
+                $"同時に開けるウィンドウは {WindowManager.MaxWindows} 枚までです。",
+                "Hirake",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+    }
+
+    private WindowBounds CaptureBounds()
+    {
+        bool maximized = WindowState == WindowState.Maximized;
+
+        // 最大化中の Left/Top/Width/Height は最大化後の値になるため、
+        // RestoreBounds（通常表示に戻したときの矩形）を使う。
+        Rect rect = maximized ? RestoreBounds : new Rect(Left, Top, Width, Height);
+
+        return new WindowBounds
+        {
+            Left = rect.Left,
+            Top = rect.Top,
+            Width = rect.Width,
+            Height = rect.Height,
+            Maximized = maximized,
+        };
     }
 
     protected override void OnClosed(EventArgs e)
     {
-        // OS テーマ追従の購読を解除する（静的イベントのためリークに注意）。
-        SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
-
         // 進行中の横断検索を打ち切る。
         CancelSearch();
 
-        // セッション（開いているタブとアクティブタブ）を保存する。
-        // クリップボード一時ファイルのタブはセッション復元対象から除外する。
+        // タブを破棄すると構成を取り出せなくなるため、ここで確定させる。
+        // WindowManager が Closed（base.OnClosed の中）で読むのもこの値。
         try
         {
-            var sessionPaths = Tabs
-                .Select(t => t.FilePath)
-                .Where(p => !IsClipboardTempFile(p))
-                .ToList();
+            _finalDescriptor = CaptureWindow();
 
-            string? active = (TabList.SelectedItem as DocumentTab)?.FilePath;
-            if (active != null && IsClipboardTempFile(active))
+            // 名前付きワークスペースを開いていた場合、タブ構成の変更を自動で書き戻す
+            // （決定事項 1。明示的な「保存」は新規作成と名前変更のためのもの）。
+            if (!string.IsNullOrEmpty(WorkspaceId))
             {
-                active = null;
+                WorkspaceStore.Instance.Update(WorkspaceId, _finalDescriptor, CaptureScroll());
             }
-
-            SettingsStore.Instance.SetSession(sessionPaths, active);
         }
         catch
         {
-            // セッション保存失敗は握りつぶす。
+            // ワークスペースの書き戻し失敗は握りつぶす。
         }
+
+        // セッション（全ウィンドウの構成）の保存は WindowManager が Closed で行う。
+        // ウィンドウごとに書き込むと、閉じた順に上書きし合って他のウィンドウが失われる。
 
         foreach (var tab in Tabs.ToList())
         {

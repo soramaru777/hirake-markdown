@@ -38,6 +38,48 @@ public sealed class CanvasTab : DocumentTab
     // NavigationCompleted の二重購読防止。
     private bool _navigationHooked;
 
+    // ワークスペース復元時に適用するビューポート。初回描画で使い切る。
+    // ノードの配置は CanvasLayoutStore の共有値をそのまま使い、
+    // 「どこを見ていたか」だけをワークスペース側が持つ（ISSUE #42 設計 7）。
+    private CanvasViewState? _initialView;
+
+    // canvas.js から最後に届いたビューポート。ワークスペース保存時に読む。
+    // 配置保存メッセージに同梱されて届くため、JS への往復は不要。
+    private volatile CanvasViewState? _currentView;
+
+    /// <summary>最後に把握しているビューポート（未取得なら null）。</summary>
+    public CanvasViewState? CurrentView => _currentView;
+
+    /// <summary>
+    /// 初回描画で使うビューポートを指定する（復元用）。
+    /// 描画前にのみ意味があるため、既に描画済みなら <see cref="ApplyView"/> を使う。
+    /// </summary>
+    public void SetInitialView(CanvasViewState view)
+    {
+        _initialView = view;
+    }
+
+    /// <summary>描画済みのキャンバスへビューポートを適用する。</summary>
+    public void ApplyView(CanvasViewState view)
+    {
+        if (!view.IsValid())
+        {
+            return;
+        }
+
+        if (!_contentLoaded || WebView.CoreWebView2 == null)
+        {
+            _initialView = view;
+            return;
+        }
+
+        _ = WebView.CoreWebView2.ExecuteScriptAsync(
+            "(function(){try{if(typeof window.__cvSetView==='function'){"
+            + $"window.__cvSetView({JsonSerializer.Serialize(view.X)},"
+            + $"{JsonSerializer.Serialize(view.Y)},{JsonSerializer.Serialize(view.K)});"
+            + "}}catch(e){}})();");
+    }
+
     public CanvasTab(string rootFolder, IDocumentTabHost host, string assetsDirectory, string tempDirectory, bool overview = false)
         : base(rootFolder, host, assetsDirectory, tempDirectory)
     {
@@ -110,8 +152,11 @@ public sealed class CanvasTab : DocumentTab
             bool overview = _overviewOnLoad;
             _overviewOnLoad = false;
 
+            CanvasViewState? initialView = _initialView;
+            _initialView = null;
+
             string dataJson = await Task.Run(
-                () => BuildDataJson(RootFolder, overview, _buildCts.Token))
+                () => BuildDataJson(RootFolder, overview, initialView, _buildCts.Token))
                 .ConfigureAwait(true);
 
             if (IsDisposed)
@@ -166,6 +211,12 @@ public sealed class CanvasTab : DocumentTab
             if (layout == null)
             {
                 return;
+            }
+
+            // ワークスペース保存で読むため、最新のビューポートを控えておく。
+            if (layout.View.IsValid())
+            {
+                _currentView = layout.View;
             }
 
             lock (_saveGate)
@@ -423,7 +474,8 @@ public sealed class CanvasTab : DocumentTab
 
     // ---- データ生成 ----------------------------------------------------
 
-    private string BuildDataJson(string rootFolder, bool overview, CancellationToken token)
+    private string BuildDataJson(
+        string rootFolder, bool overview, CanvasViewState? initialView, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
 
@@ -520,11 +572,14 @@ public sealed class CanvasTab : DocumentTab
             overview,
             nodes,
             edges,
-            view = overview || layout.View == null
-                ? null
-                : (object)new { x = layout.View.X, y = layout.View.Y, k = layout.View.K },
+            // ワークスペース由来のビューポートがあればそちらを優先する
+            // （「どこを見ていたか」はワークスペースごとに違うため）。
+            view = overview ? null : ToViewJson(initialView.IsValid() ? initialView : layout.View),
         });
     }
+
+    private static object? ToViewJson(CanvasViewState? view) =>
+        view.IsValid() ? new { x = view!.X, y = view.Y, k = view.K } : null;
 
     private string ComposeHtml(string dataJson, string theme)
     {
