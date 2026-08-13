@@ -33,6 +33,9 @@ public sealed class FingerprintTab : DocumentTab
     {
     }
 
+    /// <summary>fingerprint.js はズームバッジを公開しない。</summary>
+    protected override bool ProvidesZoomBadge => false;
+
     protected override async Task LoadContentAsync()
     {
         string html;

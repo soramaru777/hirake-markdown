@@ -142,6 +142,9 @@ public sealed class CanvasTab : DocumentTab
     /// <summary>近景プレビューを表示するのはこのタブだけ（他タブへは公開しない）。</summary>
     protected override bool MapPreviewsHost => true;
 
+    /// <summary>canvas.js はズームバッジを公開しない（キャンバス自身のズームと紛らわしいため）。</summary>
+    protected override bool ProvidesZoomBadge => false;
+
     protected override async Task LoadContentAsync()
     {
         string html;

@@ -236,6 +236,10 @@ public partial class App : Application
         // 未保存の設定変更（デバウンス待ち）を確実に書き出す。
         SettingsStore.Instance.SaveNow();
 
+        // キューに残っている診断ログを書き出す（上限つきで待つ）。
+        // 異常の直後に閉じられたとき、最も必要な最新の記録が失われないように。
+        Diagnostics.Shutdown();
+
         _instanceManager?.Dispose();
         base.OnExit(e);
     }

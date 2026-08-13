@@ -32,6 +32,9 @@ public sealed class StatsTab : DocumentTab
     {
     }
 
+    /// <summary>stats.js はズームバッジを公開しない。</summary>
+    protected override bool ProvidesZoomBadge => false;
+
     protected override async Task LoadContentAsync()
     {
         string html;
