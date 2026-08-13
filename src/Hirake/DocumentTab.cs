@@ -70,6 +70,21 @@ public class DocumentTab : IDisposable
     private string? _lastTempFile;
     private string _effectiveTheme = "light";
     private bool _initialized;
+
+    // 一度でもページの読み込みが完了したか。「関数が無い」を初期化待ちとみなすか
+    // 本当の異常とみなすかの判定に使う（ISSUE #48）。
+    // 表示中のページの読み込みが完了しているか（NavigationStarting で false に戻す）。
+    private bool _pageLoaded;
+
+    // 許可した（＝実際に遷移する）最新のトップレベル・ナビゲーションの ID。
+    // 完了イベントは開始と同じ ID を持つため、これと突き合わせることで
+    // 「キャンセルしたナビゲーションの完了」「追い越された古い完了」を捨てられる。
+    // bool 1 つでは A 開始 → B 開始 → A 完了 の交錯を表現できない。
+    private ulong? _currentNavigationId;
+
+    // ページの世代。スクリプトの実行開始から完了までの間にページが替わっていないかを見る。
+    // すべて UI スレッドからのみ触る（WebView2 のイベントと ConfigureAwait(true)）。
+    private int _navigationGeneration;
     private bool _initialScrollRestored;
     private bool _zoomHandlerAttached;
     private bool _suppressZoomNotify;
@@ -518,11 +533,189 @@ public class DocumentTab : IDisposable
             return;
         }
 
-        string theme = _effectiveTheme;
-        _ = core.ExecuteScriptAsync(
-            "(function(){try{if(typeof window.__mdvSetTheme==='function'){window.__mdvSetTheme('"
-            + theme + "');}}catch(e){}})();");
+        SafeFireAndForget(ApplyThemeToPageAsync(), "theme");
     }
+
+    /// <summary>
+    /// ページ側へテーマを反映する。失敗は診断へ記録する（ISSUE #48）。
+    /// </summary>
+    private async Task ApplyThemeToPageAsync()
+    {
+        ScriptResult result = await RunScriptAsync("__mdvSetTheme", _effectiveTheme).ConfigureAwait(true);
+        if (result.ShouldRecord)
+        {
+            Diagnostics.Record("theme", result.Describe("テーマの適用"), result.Detail);
+        }
+    }
+
+    /// <summary>
+    /// 結果を待たない非同期処理を、失敗が消えない形で投げる。
+    ///
+    /// イベントハンドラの境界（ボタン・キー入力・WebView2 からの転送）で await すると
+    /// async void になり、例外が UI スレッドの未処理例外＝エラーダイアログになる。
+    /// 見た目だけの操作でそれが出るのは避けたいが、単に捨てると #48 の状態に戻るため、
+    /// 失敗を診断へ回してから捨てる。
+    /// </summary>
+    protected static void SafeFireAndForget(Task task, string category)
+    {
+        _ = task.ContinueWith(
+            t => Diagnostics.Record(category, "非同期処理が失敗しました", t.Exception),
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted,
+            TaskScheduler.Default);
+    }
+
+    // ---- WebView2 へのスクリプト実行（共通） ---------------------------
+
+    /// <summary>
+    /// ページ側で公開されている関数を呼び、結果を 3 状態で返す。
+    ///
+    /// 従来はどの呼び出しも <c>_ = ExecuteScriptAsync(...)</c> で Task を捨てており、
+    /// さらにスクリプト側も <c>try{...}catch(e){}</c> で握りつぶしていたため、
+    /// ホストからは常に成功に見えていた（ISSUE #48）。
+    ///
+    /// ここでは呼び出しラッパーをホスト側で組み立て、成功／失敗を JSON で返させる。
+    /// スクリプト側の公開関数では例外を握らないこと（握るとホストへ届かない）。
+    ///
+    /// ■ 対象は同期関数のみ
+    /// 関数の戻り値を待たずに <c>{ok:true}</c> を返すため、Promise を返す関数に使うと
+    /// 後から起きた失敗を成功と report する。現在の対象（__mdvSetTheme /
+    /// __mdvShowZoomBadge）はいずれも同期関数。非同期の公開関数を足すときは、
+    /// ラッパーを見直すこと。
+    ///
+    /// ■ 現在の適用範囲
+    /// ISSUE #48 ではテーマとズームバッジの 2 経路だけを載せ替えている。
+    /// ExecuteScriptAsync で Task を捨てている箇所は他にも残っており（スクロール復元・
+    /// 検索・目次・キャンバスのビューポートなど）、それらは順次この関数へ寄せる。
+    /// 「共通」と名乗ってはいるが、全経路が観測可能になったわけではない。
+    /// </summary>
+    /// <param name="functionName">ページ側の関数名（例: <c>__mdvSetTheme</c>）。</param>
+    /// <param name="args">引数。文字列・数値・真偽値のみ。JSON として埋め込む。</param>
+    protected async Task<ScriptResult> RunScriptAsync(string functionName, params object?[] args)
+    {
+        if (!IsValidFunctionName(functionName))
+        {
+            // 呼び出し側の誤り。名前を JS ソースへ連結するため、書式を厳密に制限する。
+            throw new ArgumentException("関数名として使えない文字が含まれています。", nameof(functionName));
+        }
+
+        var core = WebView.CoreWebView2;
+        if (core == null)
+        {
+            // 初期化前。テーマ等は初回ロード時にテンプレートへ埋め込まれるため失敗ではない。
+            return ScriptResult.Skipped;
+        }
+
+        string argList = string.Join(",", args.Select(arg => JsonSerializer.Serialize(arg)));
+
+        // 関数名も文字列として渡し、window[name] で引く（識別子として連結しない）。
+        string nameLiteral = JsonSerializer.Serialize(functionName);
+
+        // 関数が無い場合は 'function_missing' という「符号」を返す。
+        // 関数自身が投げたメッセージと区別できないと、viewer.js の読み込み失敗や
+        // 関数名の変更を初期化待ちと取り違えて永久に見逃す（ISSUE #48）。
+        // 呼び出しコンテキストは従来の window.__mdvXxx(...) に合わせる
+        // （strict mode の関数では this が undefined になり、挙動が変わるため）。
+        string call = argList.Length == 0 ? "f.call(window);" : $"f.call(window,{argList});";
+
+        string script =
+            "(function(){try{"
+            + $"var f=window[{nameLiteral}];"
+            + "if(typeof f!=='function')"
+            + "{return JSON.stringify({ok:false,code:'function_missing'});}"
+            + call
+            + "return JSON.stringify({ok:true});"
+            + "}catch(e){return JSON.stringify({ok:false,error:String((e&&e.message)||e)});}})();";
+
+        // 実行前のページ世代。完了時に替わっていたら、判定材料（_pageLoaded）が
+        // 実行対象のページのものではなくなるため、結果を採用しない。
+        int generation = _navigationGeneration;
+
+        string raw;
+        try
+        {
+            raw = await core.ExecuteScriptAsync(script).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            // 実行中にタブが閉じられた場合の例外は正常な打ち切り。
+            return IsDisposed
+                ? ScriptResult.Skipped
+                : ScriptResult.HostError(ex.GetType().Name + ": " + ex.Message);
+        }
+
+        if (IsDisposed || generation != _navigationGeneration)
+        {
+            return ScriptResult.Skipped;
+        }
+
+        return ParseScriptResult(raw, _pageLoaded);
+    }
+
+    /// <summary>JS の識別子として安全な名前か。</summary>
+    private static bool IsValidFunctionName(string name) =>
+        !string.IsNullOrEmpty(name)
+        && System.Text.RegularExpressions.Regex.IsMatch(name, @"^[A-Za-z_$][A-Za-z0-9_$]*$");
+
+    /// <summary>
+    /// ExecuteScriptAsync の戻り値（JSON 文字列として二重に符号化されている）を解釈する。
+    /// </summary>
+    /// <param name="pageLoaded">
+    /// 一度でもページの読み込みが完了しているか。完了前に関数が無いのは初期化待ちで
+    /// 正常だが、完了後に無いのは viewer.js の読み込み失敗や関数名の変更であり異常。
+    /// </param>
+    private static ScriptResult ParseScriptResult(string? raw, bool pageLoaded)
+    {
+        if (string.IsNullOrWhiteSpace(raw) || raw == "null")
+        {
+            return ScriptResult.ScriptError("戻り値なし");
+        }
+
+        try
+        {
+            // 戻り値は「JSON 文字列を JSON 化したもの」。まず外側を外す。
+            string? inner = JsonSerializer.Deserialize<string>(raw);
+            if (string.IsNullOrWhiteSpace(inner))
+            {
+                return ScriptResult.ScriptError("戻り値なし");
+            }
+
+            using JsonDocument document = JsonDocument.Parse(inner);
+            JsonElement root = document.RootElement;
+
+            if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("ok", out JsonElement okElement))
+            {
+                return ScriptResult.ScriptError(Truncate(inner));
+            }
+
+            if (okElement.ValueKind == JsonValueKind.True)
+            {
+                return ScriptResult.Ok;
+            }
+
+            // 関数が無い場合。読み込み完了前なら初期化待ちで正常、完了後なら異常。
+            if (root.TryGetProperty("code", out JsonElement codeElement)
+                && codeElement.GetString() == "function_missing")
+            {
+                return pageLoaded
+                    ? ScriptResult.ScriptError("関数が見つかりません")
+                    : ScriptResult.Skipped;
+            }
+
+            string error = root.TryGetProperty("error", out JsonElement errorElement)
+                ? errorElement.GetString() ?? string.Empty
+                : string.Empty;
+
+            return ScriptResult.ScriptError(error);
+        }
+        catch (JsonException)
+        {
+            return ScriptResult.ScriptError(Truncate(raw));
+        }
+    }
+
+    private static string Truncate(string value) =>
+        value.Length > 200 ? value[..200] : value;
 
     private void SetDefaultBackground(string effectiveTheme)
     {
@@ -617,22 +810,34 @@ public class DocumentTab : IDisposable
 
     /// <summary>
     /// 現在のズーム倍率を整数パーセントのバッジとしてページ右下へ一時表示する。
-    /// viewer.js を読まないタブ（キャンバス等）では関数が未定義のため空振りする。
+    /// バッジを持たないページでは何もしない（呼んでから「関数が無い」と気付くと、
+    /// 正常な空振りが毎回の診断記録になってしまうため・ISSUE #48）。
     /// </summary>
     private void ShowZoomBadge(double zoom)
     {
-        var core = WebView.CoreWebView2;
-        if (core == null)
+        if (!ProvidesZoomBadge)
         {
             return;
         }
 
+        SafeFireAndForget(ShowZoomBadgeAsync(zoom), "zoom");
+    }
+
+    /// <summary>
+    /// このタブのページが <c>__mdvShowZoomBadge</c> を公開しているか。
+    /// ズームバッジは viewer.js だけが持ち、キャンバス・統計などの専用ページは
+    /// <c>__mdvSetTheme</c> しか公開していない。
+    /// </summary>
+    protected virtual bool ProvidesZoomBadge => true;
+
+    private async Task ShowZoomBadgeAsync(double zoom)
+    {
         int percent = (int)Math.Round(zoom * 100);
-        _ = core.ExecuteScriptAsync(
-            "(function(){try{if(typeof window.__mdvShowZoomBadge==='function'){"
-            + "window.__mdvShowZoomBadge("
-            + percent.ToString(CultureInfo.InvariantCulture)
-            + ");}}catch(e){}})();");
+        ScriptResult result = await RunScriptAsync("__mdvShowZoomBadge", percent).ConfigureAwait(true);
+        if (result.ShouldRecord)
+        {
+            Diagnostics.Record("zoom", result.Describe("ズーム倍率バッジの表示"), result.Detail);
+        }
     }
 
     // ---- 自動リロード -------------------------------------------------
@@ -711,6 +916,31 @@ public class DocumentTab : IDisposable
 
     private void OnNavigationStarting(object? sender, CoreWebView2NavigationStartingEventArgs e)
     {
+        DecideNavigation(e);
+
+        if (e.Cancel)
+        {
+            // 表示中のページはそのまま。公開関数も生きているので状態を触らない。
+            // この ID は採用しないため、対応する完了イベントは後で捨てられる。
+            return;
+        }
+
+        // これから別のページへ移る＝公開関数はいったん無くなる。ここで戻さないと、
+        // 自動リロード中に届いたテーマ・ズームを「読み込み後なのに関数が無い」と
+        // 誤判定してしまう（ISSUE #48）。
+        _pageLoaded = false;
+
+        // リダイレクトは同じ ID で再度ここへ来る。同じページの続きなので世代は進めない。
+        if (_currentNavigationId != e.NavigationId)
+        {
+            _currentNavigationId = e.NavigationId;
+            _navigationGeneration++;
+        }
+    }
+
+    /// <summary>ナビゲーションを許可するか・別タブや既定ブラウザへ回すかを決める。</summary>
+    private void DecideNavigation(CoreWebView2NavigationStartingEventArgs e)
+    {
         string uriString = e.Uri;
         if (!Uri.TryCreate(uriString, UriKind.Absolute, out var uri))
         {
@@ -746,6 +976,38 @@ public class DocumentTab : IDisposable
 
     private void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
     {
+        // キャンセルしたナビゲーション（.md リンク・外部 URL）や、新しいナビゲーションに
+        // 追い越された古いナビゲーションでもここへ来る。表示中のページは変わっていないので、
+        // 状態も注入も触らない（触ると、復元待ちのスクロール位置を横取りしてしまう）。
+        //
+        // 採用済みの ID と完全に一致するものだけを受け入れる。開始を見ていない完了
+        // （初期化直後の about:blank など）を救済すると、そこで注入と状態更新が走る。
+        // このハンドラは最初のナビゲーションより前に購読しているため、自前の
+        // Navigate / NavigateToString は必ず開始側で ID を採用できる。
+        if (_currentNavigationId != e.NavigationId)
+        {
+            return;
+        }
+
+        // 読み込みが済んだ＝公開関数が揃っているはずの状態。これ以降に
+        // 「関数が無い」のは初期化待ちではなく本当の異常（ISSUE #48）。
+        _pageLoaded = e.IsSuccess;
+
+        if (!e.IsSuccess)
+        {
+            // 打ち切りは失敗ではない。自動リロードが連続すると前のナビゲーションが
+            // 中断されるため、これを記録すると通常操作でログが埋まる。
+            if (e.WebErrorStatus is not CoreWebView2WebErrorStatus.OperationCanceled
+                and not CoreWebView2WebErrorStatus.ConnectionAborted)
+            {
+                Diagnostics.Record("navigation", "ページの読み込みに失敗しました", e.WebErrorStatus.ToString());
+            }
+
+            // 失敗したページに関数は無い。ここで打ち切らないと、以降のテーマ・
+            // ズーム操作が二次的な「関数が無い」を量産し、本命の失敗が埋もれる。
+            return;
+        }
+
         var core = WebView.CoreWebView2;
         if (core == null)
         {
