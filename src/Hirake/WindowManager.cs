@@ -245,7 +245,26 @@ public sealed class WindowManager
 
     // ---- テーマの伝播 --------------------------------------------------
 
-    /// <summary>全ウィンドウへ実効テーマを適用する（テーマはアプリ全体で 1 つ）。</summary>
+    /// <summary>
+    /// 全ウィンドウへ実効テーマを適用する（テーマはアプリ全体で 1 つ）。
+    /// 1 枚の失敗で他のウィンドウを止めない。
+    ///
+    /// 失敗を呼び出し元へ返さないのは、次の 3 つが重なっているため。
+    ///
+    /// 1. 呼び出し元はいずれもイベントハンドラの境界（ボタン・キー入力・
+    ///    WebView2 からの転送）で、例外を投げると見た目だけの操作で
+    ///    スタックトレース入りの「予期しないエラー」ダイアログが出る。
+    /// 2. このアプリには非モーダルな通知面もログ基盤も無く、出せるのが
+    ///    モーダルダイアログしかない。
+    /// 3. そもそも失敗を完全には観測できない。<see cref="DocumentTab.ApplyTheme"/> は
+    ///    ExecuteScriptAsync を待たないため、ユーザーが実際に見る Markdown 本文側の
+    ///    失敗はここへ届かない。捕まえられるのは WPF クローム側だけで、
+    ///    「失敗を漏れなく扱う」という約束はこの構造では成立しない。
+    ///
+    /// テーマ適用の失敗をきちんと扱うには、適用経路を非同期化して WebView2 側の
+    /// 結果まで集約する必要がある。それは本 ISSUE（伝播漏れの修正）の範囲を超える
+    /// ため、別 ISSUE として切り出している。
+    /// </summary>
     public void ApplyThemeToAll()
     {
         foreach (var window in _windows.ToList())
@@ -284,14 +303,33 @@ public sealed class WindowManager
             return;
         }
 
-        var dispatcher = Application.Current?.Dispatcher;
-        dispatcher?.BeginInvoke(() =>
+        try
         {
-            if (string.Equals(SettingsStore.Instance.Theme, "auto", StringComparison.OrdinalIgnoreCase))
+            var dispatcher = Application.Current?.Dispatcher;
+            dispatcher?.BeginInvoke(() =>
             {
-                ApplyThemeToAll();
-            }
-        });
+                // コールバック全体を包む。ApplyThemeToAll は投げないが、設定の取得や
+                // 将来の追加処理で漏れた例外がここから未処理例外になると、
+                // ユーザーが Hirake に対して何もしていないタイミングでエラー
+                // ダイアログが出てしまう。
+                try
+                {
+                    if (string.Equals(SettingsStore.Instance.Theme, "auto", StringComparison.OrdinalIgnoreCase))
+                    {
+                        ApplyThemeToAll();
+                    }
+                }
+                catch
+                {
+                    // OS 由来の追従処理が失敗しても、アプリの動作は止めない。
+                }
+            });
+        }
+        catch
+        {
+            // シャットダウン中などで BeginInvoke 自体が失敗することがある。
+            // この呼び出しは SystemEvents のスレッドから来るため、投げ返さない。
+        }
     }
 
     // ---- セッション保存 ------------------------------------------------
