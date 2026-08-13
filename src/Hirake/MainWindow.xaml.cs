@@ -1568,7 +1568,12 @@ public partial class MainWindow : Window, IDocumentTabHost
         };
 
         SettingsStore.Instance.Theme = next;
-        ApplyEffectiveTheme();
+
+        // テーマはアプリ全体で 1 つ。ただし適用先の Resources はウィンドウ単位の
+        // 辞書なので、開いているウィンドウすべてに適用しないと表示がずれる。
+        // ApplyThemeToAll は自ウィンドウも含めて回すため、ここで別途
+        // ApplyEffectiveTheme() を呼ぶ必要はない。失敗時の扱いはそちらのコメントを参照。
+        WindowManager.Instance.ApplyThemeToAll();
     }
 
     /// <summary>現在のテーマ設定から実効テーマを求め、全タブと WPF クロームへ反映する。</summary>
