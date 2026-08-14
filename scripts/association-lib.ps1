@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 <#
 .SYNOPSIS
     register.ps1 / unregister.ps1 が共用する、HKCU のレジストリ操作ヘルパー。

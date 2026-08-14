@@ -71,10 +71,7 @@ public sealed class SettingsStore
 
     private SettingsStore()
     {
-        string directory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Hirake");
-        _filePath = Path.Combine(directory, "settings.json");
+        _filePath = AppPaths.SettingsFile;
         _data = Load();
     }
 

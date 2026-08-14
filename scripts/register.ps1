@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 <#
 .SYNOPSIS
     Hirake を .md / .markdown ファイルの「プログラムから開く」候補として HKCU に登録します。

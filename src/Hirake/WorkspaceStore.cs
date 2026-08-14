@@ -82,10 +82,7 @@ public sealed class WorkspaceStore
 
     private WorkspaceStore()
     {
-        string directory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Hirake");
-        _filePath = Path.Combine(directory, "workspaces.json");
+        _filePath = AppPaths.WorkspacesFile;
         _data = Load();
     }
 

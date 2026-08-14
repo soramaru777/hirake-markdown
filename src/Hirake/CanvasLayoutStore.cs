@@ -51,15 +51,13 @@ public static class CanvasLayoutStore
     // 保存するノード配置エントリの上限（要求分 + 保持分の合計）。
     private const int MaxEntries = 2000;
 
-    private static string CanvasDirectory => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "Hirake", "canvas");
+    private static string CanvasDirectory => AppPaths.CanvasDir;
 
     /// <summary>サムネイル PNG の置き場（thumbs.hirake 仮想ホストのマップ先）。</summary>
-    public static string ThumbsDirectory => Path.Combine(CanvasDirectory, "thumbs");
+    public static string ThumbsDirectory => AppPaths.ThumbsDir;
 
     /// <summary>近景プレビュー HTML の置き場（previews.hirake 仮想ホストのマップ先）。</summary>
-    public static string PreviewsDirectory => Path.Combine(CanvasDirectory, "previews");
+    public static string PreviewsDirectory => AppPaths.PreviewsDir;
 
     /// <summary>文書のサムネイル PNG のフルパス（ファイル名はフルパスのハッシュ）。</summary>
     public static string ThumbnailPathFor(string documentFullPath)
