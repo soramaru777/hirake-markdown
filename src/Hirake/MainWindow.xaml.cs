@@ -41,14 +41,8 @@ public partial class MainWindow : Window, IDocumentTabHost
         DataContext = this;
 
         _assetsDirectory = Path.Combine(AppContext.BaseDirectory, "Assets");
-        _tempDirectory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Hirake",
-            "temp");
-        _clipboardDirectory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Hirake",
-            "clipboard");
+        _tempDirectory = AppPaths.TempDir;
+        _clipboardDirectory = AppPaths.ClipboardDir;
 
         // 起動時に古いクリップボード一時ファイルを軽く掃除する。
         CleanupClipboardFiles();

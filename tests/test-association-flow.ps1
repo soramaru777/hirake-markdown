@@ -1,4 +1,5 @@
-#requires -Version 5.1
+﻿# Join-String を使うため PowerShell 7 が必要（register.ps1 本体は 5.1 で動く）。
+#requires -Version 7.0
 <#
 .SYNOPSIS
     register.ps1 / unregister.ps1 の制御フロー（Invoke-Hirake*）の統合テスト。

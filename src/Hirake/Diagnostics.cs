@@ -57,10 +57,7 @@ public static class Diagnostics
     private static readonly object RecentLock = new();
     private static readonly Dictionary<string, DateTime> RecentKeys = new(StringComparer.Ordinal);
 
-    private static readonly Lazy<string> DirectoryPath = new(() => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "Hirake",
-        "logs"));
+    private static readonly Lazy<string> DirectoryPath = new(() => AppPaths.LogsDir);
 
     private static readonly Lazy<bool> Started = new(Start);
 

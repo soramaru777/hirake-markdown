@@ -50,6 +50,29 @@ Hirake は、エディタでの編集を目的とせず「素早く正確に Mar
 - **フロントマターカード + メタ情報バー**: YAML フロントマターをカード表示し、文字数・読了目安・更新日時をバーに表示します
 - **別ドライブ絶対パスリンク対応**: 別ドライブへの絶対パスの `.md` リンクも新しいタブで開けます
 
+## インストール
+
+[Releases](https://github.com/soramaru777/hirake-markdown/releases) から `HirakeSetup-x.y.z.exe` をダウンロードして実行します。
+
+- **管理者権限は不要です。** `%LocalAppData%\Programs\Hirake` にユーザー単位でインストールします
+- **.NET ランタイムの事前導入も不要です。** インストーラに同梱しています
+- `.md` の関連付けとスタートメニューのショートカットは、ウィザードのチェックボックスで選べます
+
+アンインストールは「設定 > アプリ > インストールされているアプリ」から行います。
+
+> **初回起動時の警告について**
+>
+> インストーラにコード署名がないため、「Windows によって PC が保護されました」という青い画面が出ます。
+> **「詳細情報」→「実行」** を押すと続行できます（この表示は署名証明書を取得するまで消せません）。
+
+### 設定やデータも完全に削除したい場合
+
+アンインストールしても、設定・ワークスペース・セマンティック索引は残ります（再インストール時に失わないためです）。完全に消す場合は、アンインストール後に次のフォルダを削除してください。
+
+```powershell
+Remove-Item -Recurse -Force "$env:LocalAppData\Hirake"
+```
+
 ## ビルド方法
 
 .NET 10 SDK がインストールされた環境で、以下のコマンドを実行してください。
@@ -60,7 +83,11 @@ dotnet publish src/Hirake -c Release -r win-x64 --self-contained false -o publis
 
 ビルド成果物は `publish` フォルダに出力されます（`publish\Hirake.exe`）。
 
+配布用のインストーラを作る手順は [`installer/README.md`](installer/README.md) を参照してください。
+
 ## .md 関連付け手順
+
+> インストーラを使った場合、この手順は不要です（ウィザードで登録済み）。ソースからビルドした場合や、インストール時に関連付けを外した場合に使います。
 
 `.md` / `.markdown` ファイルを Hirake で開けるようにするには、`scripts/register.ps1` を実行します。管理者権限は不要です（現在のユーザー = HKCU にのみ登録します）。
 
@@ -204,9 +231,9 @@ Start-Process "hirake://workspace?name=%E3%83%AA%E3%83%AA%E3%83%BC%E3%82%B9%E6%B
 
 ## 動作要件
 
-- Windows 10 / Windows 11
-- .NET 10 Desktop Runtime
+- Windows 10 バージョン 1809（10.0.17763）以降 / Windows 11、x64
 - WebView2 Runtime（Windows 11 には標準搭載。Windows 10 では別途インストールが必要な場合があります）
+- .NET 10 Desktop Runtime — **インストーラを使う場合は不要**（同梱しています）。ソースからビルドして使う場合のみ必要です
 
 ## ライセンス
 

@@ -12,6 +12,18 @@
     <AssemblyName>Hirake</AssemblyName>
     <RootNamespace>Hirake</RootNamespace>
     <ApplicationIcon>app.ico</ApplicationIcon>
+
+    <!-- 版の唯一の出所（ISSUE #40 設計 1-2）。
+         インストーラの AppVersion と GitHub Releases のタグ（v1.0.0）は、
+         release.yml がここと一致することを検証したうえで使う。
+         ここを更新したら、対応するタグを push する。 -->
+    <Version>1.0.0</Version>
+    <FileVersion>1.0.0.0</FileVersion>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <InformationalVersion>1.0.0</InformationalVersion>
+    <Product>Hirake</Product>
+    <Company>Hirake</Company>
+    <Copyright>Copyright (c) Hirake contributors</Copyright>
   </PropertyGroup>
 
   <ItemGroup>

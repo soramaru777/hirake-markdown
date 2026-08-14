@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 <#
 .SYNOPSIS
     Hirake の .md / .markdown 関連付け（HKCU）を削除します。

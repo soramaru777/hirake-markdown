@@ -80,9 +80,7 @@ public static class StatsService
     // 履歴の保持上限（日数分の行）。超過分は古い方から捨てる。
     private const int MaxHistoryPoints = 730;
 
-    private static string StatsDirectory => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "Hirake", "stats");
+    private static string StatsDirectory => AppPaths.StatsDir;
 
     /// <summary>rootFolder 配下を走査して統計を集計する（同期・CPU バウンド）。</summary>
     public static StatsResult Build(string rootFolder, CancellationToken token)

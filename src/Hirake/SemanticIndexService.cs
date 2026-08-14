@@ -112,13 +112,9 @@ public static class SemanticIndexService
 
     // ---- 保存先パス ---------------------------------------------------
 
-    private static string ModelDirectory => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "Hirake", "models", ModelName);
+    private static string ModelDirectory => Path.Combine(AppPaths.ModelsDir, ModelName);
 
-    private static string IndexDirectory => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "Hirake", "index");
+    private static string IndexDirectory => AppPaths.IndexDir;
 
     // ================================================================
     //  検索 API

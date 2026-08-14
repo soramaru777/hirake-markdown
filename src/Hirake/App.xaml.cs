@@ -25,10 +25,7 @@ public partial class App : Application
 
     private static Task<CoreWebView2Environment> CreateEnvironmentAsync()
     {
-        string userDataFolder = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Hirake",
-            "WebView2");
+        string userDataFolder = AppPaths.WebView2Dir;
         Directory.CreateDirectory(userDataFolder);
         return CoreWebView2Environment.CreateAsync(null, userDataFolder, null);
     }

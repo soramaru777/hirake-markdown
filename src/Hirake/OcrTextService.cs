@@ -47,9 +47,7 @@ internal static class OcrTextService
     // deferCacheSave で保存を遅延した未保存エントリがあるか（FlushCache の空振り防止）。
     private static volatile bool _cacheDirty;
 
-    private static string CacheDirectory => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "Hirake", "ocr");
+    private static string CacheDirectory => AppPaths.OcrDir;
 
     private static string CacheFilePath => Path.Combine(CacheDirectory, "cache.json");
 
