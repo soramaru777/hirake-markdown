@@ -6,6 +6,50 @@ using System.Runtime.CompilerServices;
 namespace Hirake;
 
 /// <summary>
+/// フォルダを走査してよいか。<b>拒否の理由まで持つ</b>のが要点。
+///
+/// bool だけだと「ネットワークだから絶対に開けない」と「ローカルのリンクなので
+/// 設定を入れれば開ける」を区別できず、利用者に案内が出せない（ISSUE #61）。
+/// </summary>
+public enum TraversalVerdict
+{
+    /// <summary>走査してよい。</summary>
+    Allowed,
+
+    /// <summary>実在しない・判定できない・リンクの連鎖が長すぎる。</summary>
+    NotFound,
+
+    /// <summary>
+    /// UNC・ネットワークドライブ・デバイスパス。設定では開けないので、
+    /// <b>「設定を有効にすると開けます」と案内してはいけない</b>。
+    /// </summary>
+    BlockedByNetwork,
+
+    /// <summary>
+    /// ローカルのリンクを経由している。<c>FollowDirectoryLinks</c> を
+    /// 有効にすれば開けるので、案内を出してよい唯一の理由。
+    /// </summary>
+    BlockedByLink,
+}
+
+/// <summary>走査の可否判定の結果と、許可された場合の実パス。</summary>
+public readonly record struct TraversalCheck(TraversalVerdict Verdict, string? ResolvedPath)
+{
+    /// <summary>走査してよい。</summary>
+    public static TraversalCheck Allow(string resolvedPath)
+        => new(TraversalVerdict.Allowed, resolvedPath);
+
+    /// <summary>走査しない。理由を添える。</summary>
+    public static TraversalCheck Blocked(TraversalVerdict verdict) => new(verdict, null);
+
+    /// <summary>走査してよいか。</summary>
+    public bool IsAllowed => Verdict == TraversalVerdict.Allowed;
+
+    /// <summary>「設定を有効にすると開けます」と案内すべきか。</summary>
+    public bool NeedsSettingHint => Verdict == TraversalVerdict.BlockedByLink;
+}
+
+/// <summary>
 /// ファイルツリーサイドバーの 1 ノード（フォルダ or Markdown ファイル）。
 /// フォルダは遅延展開し、初回展開時に子を実際に読み込む（深い走査を避ける）。
 /// </summary>
@@ -304,7 +348,7 @@ public sealed class FileTreeItem : INotifyPropertyChanged
         }
 
         // 解決できた＝祖先も飛び先もすべてローカルだったということ。
-        return ResolveSafePath(path, isDirectory) != null;
+        return CheckTraversalCore(path, isDirectory).IsAllowed;
     }
 
     /// <summary>
@@ -330,7 +374,7 @@ public sealed class FileTreeItem : INotifyPropertyChanged
     /// 1 ホップずつ受け取れば <c>\\server\share</c> のまま判定できる。
     /// </para>
     /// </summary>
-    private static string? ResolveSafePath(string path, bool isDirectory)
+    private static TraversalCheck CheckTraversalCore(string path, bool isDirectory)
     {
         char[] separators = { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar };
 
@@ -339,6 +383,11 @@ public sealed class FileTreeItem : INotifyPropertyChanged
             string full = Path.GetFullPath(path);
             int hops = 0;
 
+            // 設定が無効でも解決は最後まで行う。途中で打ち切ると、UNC を指す
+            // リンクや壊れたリンクまで「設定を有効にすれば開けます」と
+            // 案内してしまう（実際には設定を入れても開けない）。
+            bool sawLink = false;
+
             while (true)
             {
                 // 起点は「ネットワークでないこと」だけを課す（CD-ROM やボリューム
@@ -346,13 +395,13 @@ public sealed class FileTreeItem : INotifyPropertyChanged
                 bool acceptable = hops == 0 ? !IsNetworkPath(full) : IsLocalDrivePath(full);
                 if (!acceptable)
                 {
-                    return null;
+                    return TraversalCheck.Blocked(TraversalVerdict.BlockedByNetwork);
                 }
 
                 string? root = Path.GetPathRoot(full);
                 if (string.IsNullOrEmpty(root))
                 {
-                    return null;
+                    return TraversalCheck.Blocked(TraversalVerdict.NotFound);
                 }
 
                 string[] parts = full[root.Length..].Split(separators, StringSplitOptions.RemoveEmptyEntries);
@@ -377,9 +426,11 @@ public sealed class FileTreeItem : INotifyPropertyChanged
                         continue;
                     }
 
+                    sawLink = true;
+
                     if (++hops > MaxLinkHops)
                     {
-                        return null;
+                        return TraversalCheck.Blocked(TraversalVerdict.NotFound);
                     }
 
                     FileSystemInfo? target = asDirectory
@@ -387,7 +438,7 @@ public sealed class FileTreeItem : INotifyPropertyChanged
                         : File.ResolveLinkTarget(current, returnFinalTarget: false);
                     if (target == null)
                     {
-                        return null;
+                        return TraversalCheck.Blocked(TraversalVerdict.NotFound);
                     }
 
                     string rest = string.Join(Path.DirectorySeparatorChar, parts[(i + 1)..]);
@@ -400,13 +451,25 @@ public sealed class FileTreeItem : INotifyPropertyChanged
 
                 if (!followed)
                 {
-                    return full;
+                    // ここまで来た＝経路はすべてローカルで、解決も済んでいる。
+                    // リンクを 1 つでも通ったなら、設定に従って可否を決める。
+                    if (sawLink && !SettingsStore.Instance.FollowDirectoryLinks)
+                    {
+                        // 「設定を有効にすれば開ける」と言えるのは、実際に開ける
+                        // ときだけ。壊れたリンク（飛び先が無い）でこれを返すと、
+                        // 設定を入れても開けないのに案内が出てしまう。
+                        bool exists = isDirectory ? Directory.Exists(full) : File.Exists(full);
+                        return TraversalCheck.Blocked(
+                            exists ? TraversalVerdict.BlockedByLink : TraversalVerdict.NotFound);
+                    }
+
+                    return TraversalCheck.Allow(full);
                 }
             }
         }
         catch
         {
-            return null;
+            return TraversalCheck.Blocked(TraversalVerdict.NotFound);
         }
     }
 
@@ -513,7 +576,7 @@ public sealed class FileTreeItem : INotifyPropertyChanged
     /// 見るのは字句とドライブ種別だけで、途中のリンクは見ない。
     /// <see cref="HirakeUri.IsRemoteOrUncFolder"/> は祖先にリンクがあると拒否するため、
     /// ここで使うと「ローカル → ローカル」のリンクの連鎖まで弾いてしまう。
-    /// 連鎖の各ホップは <see cref="ResolveSafePath"/> が 1 つずつ検査する。
+    /// 連鎖の各ホップは <see cref="CheckTraversalCore"/> が 1 つずつ検査する。
     /// </summary>
     private static bool IsLocalDrivePath(string path)
     {
@@ -591,7 +654,7 @@ public sealed class FileTreeItem : INotifyPropertyChanged
                 return Path.GetFullPath(path);
             }
 
-            return ResolveSafePath(path, isDirectory);
+            return CheckTraversalCore(path, isDirectory).ResolvedPath;
         }
         catch
         {
@@ -609,33 +672,20 @@ public sealed class FileTreeItem : INotifyPropertyChanged
     /// <c>Directory.Exists</c> でネットワークへ出てしまう。
     ///
     /// <para>
-    /// リンクの読み替えを行うのは <c>FollowDirectoryLinks</c> が有効なときだけ。
-    /// 無効なときは検査だけ行い、<b>元のパスの絶対形をそのまま返す</b>。
-    /// 設定を入れていない利用者のパス表示を勝手に実体へ書き換えないため
-    /// （ユーザープロファイル配下のようにジャンクションを含むパスは珍しくない）。
+    /// 設定が無効なとき、リンクを経由するパスは<b>拒否</b>する（ISSUE #61）。
+    /// 以前は検査だけ行って元のパスを返していたが、それだと「辿らない」設定なのに
+    /// リンク経由のフォルダを走査できてしまい、設定の意味と食い違っていた。
     /// </para>
     /// </summary>
     internal static string? ResolveCheckedPath(string path, bool isDirectory)
-    {
-        if (ResolveSafePath(path, isDirectory) == null)
-        {
-            return null;
-        }
+        => CheckTraversal(path, isDirectory).ResolvedPath;
 
-        if (SettingsStore.Instance.FollowDirectoryLinks)
-        {
-            return ResolveSafePath(path, isDirectory);
-        }
-
-        try
-        {
-            return Path.GetFullPath(path);
-        }
-        catch
-        {
-            return null;
-        }
-    }
+    /// <summary>
+    /// 走査してよいかを<b>理由つき</b>で判定し、許可なら実パスも返す。
+    /// 案内文の出し分けが要る呼び出し側（UI）はこちらを使う。
+    /// </summary>
+    internal static TraversalCheck CheckTraversal(string path, bool isDirectory)
+        => CheckTraversalCore(path, isDirectory);
 
     /// <summary>
     /// 走査の「起点」として安全なフォルダか。
@@ -664,10 +714,10 @@ public sealed class FileTreeItem : INotifyPropertyChanged
         }
 
         // 起点自身がリンクでなくても、祖先が \\server\share を指していれば
-        // 走査した時点でネットワークへ触れる。設定に関係なく検査する
-        // （オフでも「ローカルの祖先リンク」は従来どおり通す。塞ぐのは
-        // ネットワークへ出る経路だけ）。
-        if (ResolveSafePath(path, isDirectory: true) == null)
+        // 走査した時点でネットワークへ触れる。ネットワークは設定に関係なく拒否し、
+        // ローカルのリンクは設定に従う（設定オフなら祖先リンクでも拒否する。
+        // ISSUE #61。以前はここを通していたが、設定の意味と食い違っていた）。
+        if (!CheckTraversalCore(path, isDirectory: true).IsAllowed)
         {
             return false;
         }
@@ -714,14 +764,22 @@ public sealed class FileTreeItem : INotifyPropertyChanged
         }
     }
 
-    /// <summary>ContainsMarkdown の結果をキャッシュ経由で返す（トップレベル問い合わせ用）。</summary>
+    /// <summary>
+    /// ContainsMarkdown の結果をキャッシュ経由で返す（トップレベル問い合わせ用）。
+    ///
+    /// キーに設定値を含める。走査結果は <c>FollowDirectoryLinks</c> で変わるため、
+    /// 含めないと設定を切り替えたときに古い結果が残る（現状は再起動が要るので
+    /// 表面化しないが、設定 UI を付けた時点で壊れる）。
+    /// </summary>
     private static bool ContainsMarkdownCached(string directory)
         => ContainsMarkdownCache.GetOrAdd(
-            directory,
-            d => ContainsMarkdown(
-                d,
+            (SettingsStore.Instance.FollowDirectoryLinks ? "1|" : "0|") + directory,
+            // 走査するのはキーではなく元のフォルダ。キーには接頭辞が付いている。
+            static (_, dir) => ContainsMarkdown(
+                dir,
                 ContainsScanMaxDepth,
-                new HashSet<string>(StringComparer.OrdinalIgnoreCase)));
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase)),
+            directory);
 
     /// <summary>
     /// フォルダ配下（depth 上限まで）に Markdown が 1 つでも存在するか。最初の 1 件で打ち切る。

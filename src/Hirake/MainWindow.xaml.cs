@@ -20,6 +20,21 @@ public partial class MainWindow : Window, IDocumentTabHost
     // ---- サイドバー（ファイルツリー / 横断検索）状態 ----
     private const double DefaultSidebarWidth = 240;
     private bool _sidebarVisible;
+
+    // リンクを経由するフォルダを設定なしで開こうとしたときの案内（ISSUE #61）。
+    // ネットワークのときには出さない（設定を有効にしても開けないため）。
+    private const string TreeEmptyMessage = "フォルダがありません";
+
+    private const string LinkBlockedTreeMessage =
+        "このフォルダはリンクを経由しています。settings.json の FollowDirectoryLinks を true にすると表示できます。";
+
+    private const string LinkBlockedSearchMessage =
+        "このフォルダはリンクを経由しています。FollowDirectoryLinks を true にすると検索できます。";
+
+    private const string LinkBlockedDialogMessage =
+        "このフォルダはリンク（シンボリックリンク／ジャンクション）を経由しています。\n\n"
+        + "settings.json の FollowDirectoryLinks を true にして再起動すると開けます。";
+
     private string? _currentRootFolder;
     private FileTreeItem? _activeTreeItem;
     private GridLength _savedSidebarWidth = new(DefaultSidebarWidth);
@@ -146,7 +161,7 @@ public partial class MainWindow : Window, IDocumentTabHost
                 // 検査済みの実パスにしてから使う。素のフォルダ名のまま
                 // Directory.Exists へ渡すと、祖先が UNC を指すリンクだった
                 // 場合にその時点で SMB へ出る（ISSUE #54）。
-                root = ResolveTreeRoot(active.FilePath);
+                root = ResolveTreeRootOrHint(active.FilePath);
                 break;
             default:
                 root = null;
@@ -172,10 +187,18 @@ public partial class MainWindow : Window, IDocumentTabHost
         try
         {
             string full = Path.GetFullPath(root);
-            if (HirakeUri.IsRemoteOrUncFolder(full) || !FileTreeItem.IsSafeTraversalRoot(full))
+            if (HirakeUri.IsRemoteOrUncFolder(full))
             {
                 return null;
             }
+
+            // 案内は入口（ResolveTreeRootOrHint）で出す。ここで出すと、
+            // 同じ操作で 2 回ダイアログが出ることになる。
+            if (!FileTreeItem.CheckTraversal(full, isDirectory: true).IsAllowed)
+            {
+                return null;
+            }
+
             return full;
         }
         catch
@@ -238,7 +261,7 @@ public partial class MainWindow : Window, IDocumentTabHost
                 // 検査済みの実パスにしてから使う。素のフォルダ名のまま
                 // Directory.Exists へ渡すと、祖先が UNC を指すリンクだった
                 // 場合にその時点で SMB へ出る（ISSUE #54）。
-                root = ResolveTreeRoot(active.FilePath);
+                root = ResolveTreeRootOrHint(active.FilePath);
                 break;
             default:
                 root = null;
@@ -305,7 +328,7 @@ public partial class MainWindow : Window, IDocumentTabHost
                 // 検査済みの実パスにしてから使う。素のフォルダ名のまま
                 // Directory.Exists へ渡すと、祖先が UNC を指すリンクだった
                 // 場合にその時点で SMB へ出る（ISSUE #54）。
-                root = ResolveTreeRoot(active.FilePath);
+                root = ResolveTreeRootOrHint(active.FilePath);
                 break;
             default:
                 root = null;
@@ -383,7 +406,7 @@ public partial class MainWindow : Window, IDocumentTabHost
                 // 検査済みの実パスにしてから使う。素のフォルダ名のまま
                 // Directory.Exists へ渡すと、祖先が UNC を指すリンクだった
                 // 場合にその時点で SMB へ出る（ISSUE #54）。
-                root = ResolveTreeRoot(active.FilePath);
+                root = ResolveTreeRootOrHint(active.FilePath);
                 break;
             default:
                 root = null;
@@ -1090,17 +1113,19 @@ public partial class MainWindow : Window, IDocumentTabHost
         }
 
         var active = TabList.SelectedItem as DocumentTab;
-        string? folder = null;
-        if (active != null)
-        {
-            folder = ResolveTreeRoot(active.FilePath);
-        }
+        TraversalCheck check = active != null
+            ? CheckTreeRoot(active.FilePath)
+            : TraversalCheck.Blocked(TraversalVerdict.NotFound);
+        string? folder = check.ResolvedPath;
 
         if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder))
         {
             _currentRootFolder = null;
             FileTree.ItemsSource = null;
             TreeRootLabel.Text = string.Empty;
+            // 「リンクを経由しているだけ」なら設定で開けるので、そう案内する。
+            // ネットワークや不存在では案内しない（設定を入れても開けないため）。
+            TreeEmptyLabel.Text = check.NeedsSettingHint ? LinkBlockedTreeMessage : TreeEmptyMessage;
             TreeEmptyLabel.Visibility = Visibility.Visible;
             return;
         }
@@ -1157,7 +1182,7 @@ public partial class MainWindow : Window, IDocumentTabHost
 
         FileTree.ItemsSource = children;
         TreeRootLabel.Text = rootFolder;
-        TreeEmptyLabel.Text = "フォルダがありません";
+        TreeEmptyLabel.Text = TreeEmptyMessage;
         TreeEmptyLabel.Visibility = children.Count == 0
             ? Visibility.Visible
             : Visibility.Collapsed;
@@ -1188,21 +1213,47 @@ public partial class MainWindow : Window, IDocumentTabHost
     /// 直後の <c>Directory.Exists</c> でネットワークへ出てしまう。
     /// </para>
     /// </summary>
-    private static string? ResolveTreeRoot(string filePath)
+    private static string? ResolveTreeRoot(string filePath) => CheckTreeRoot(filePath).ResolvedPath;
+
+    /// <summary>
+    /// 仮想タブ（構造クエリ・指紋・統計・キャンバス）の入口用。
+    /// 開けない理由が「設定で開ける」ものなら知らせる。
+    ///
+    /// ツリーや検索と違って表示先のラベルが無く、黙って null を返すと
+    /// ボタンを押しても無反応に見えるため、ここだけダイアログを出す。
+    /// </summary>
+    private static string? ResolveTreeRootOrHint(string filePath)
+    {
+        TraversalCheck check = CheckTreeRoot(filePath);
+        if (check.NeedsSettingHint)
+        {
+            MessageBox.Show(
+                LinkBlockedDialogMessage,
+                "Hirake - フォルダを開けません",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        return check.ResolvedPath;
+    }
+
+    /// <summary>
+    /// <see cref="ResolveTreeRoot"/> の理由つき版。案内を出し分ける呼び出し側で使う。
+    /// </summary>
+    private static TraversalCheck CheckTreeRoot(string filePath)
     {
         try
         {
             string? folder = Path.GetDirectoryName(filePath);
             if (string.IsNullOrEmpty(folder))
             {
-                return null;
+                return TraversalCheck.Blocked(TraversalVerdict.NotFound);
             }
 
-            return FileTreeItem.ResolveCheckedPath(folder, isDirectory: true);
+            return FileTreeItem.CheckTraversal(folder, isDirectory: true);
         }
         catch
         {
-            return null;
+            return TraversalCheck.Blocked(TraversalVerdict.NotFound);
         }
     }
 
@@ -1366,10 +1417,18 @@ public partial class MainWindow : Window, IDocumentTabHost
         string? root = _currentRootFolder;
         if (string.IsNullOrEmpty(root) || !Directory.Exists(root))
         {
+            // ルートが決まらない理由まで見る。リンクを経由しているだけなら
+            // 設定で検索できるようになるので、そう案内する。
+            TraversalCheck check = TabList.SelectedItem is DocumentTab activeTab
+                ? CheckTreeRoot(activeTab.FilePath)
+                : TraversalCheck.Blocked(TraversalVerdict.NotFound);
+
             ShowSearchPane();
             SearchResultsList.ItemsSource = null;
             SearchSummary.Text = string.Empty;
-            SearchEmptyLabel.Text = "検索対象のフォルダがありません";
+            SearchEmptyLabel.Text = check.NeedsSettingHint
+                ? LinkBlockedSearchMessage
+                : "検索対象のフォルダがありません";
             SearchEmptyLabel.Visibility = Visibility.Visible;
             return;
         }
