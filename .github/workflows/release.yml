@@ -28,6 +28,91 @@ jobs:
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # 祖先判定には履歴が要る。既定（1）の浅いクローンでは判定できない。
+          fetch-depth: 0
+
+      # 未マージのコミットにタグを打つと、develop にも main にも入っていない
+      # コードでインストーラができ、下書き Release まで作られる（ISSUE #52）。
+      # ここで落とせば package-inno も publish-release も needs で止まる。
+      #
+      # 見ているのは「どのブランチでタグを作ったか」ではなく「そのコミットが
+      # ブランチに含まれるか」。前者（github.event.base_ref）はタグの作り方に
+      # 依存し、正しいタグが黙って skip される。
+      #
+      # マージコミット運用が前提。squash マージへ変えると、マージ済みでも
+      # 元コミットは祖先にならないため、この検証も見直しが要る。
+      #
+      # ■ これは操作ミスを防ぐためのもので、権限の代わりにはならない
+      # タグ push で起動するワークフローは「タグが指すコミット側の定義」で動く。
+      # つまり、このステップを消したコミットにタグを打てば検証ごと消える。
+      # 悪意ある相手まで止めるには、リポジトリのルールセットで v* タグの
+      # 作成・更新・削除を絞る必要がある（ISSUE #52 では非スコープ）。
+      - name: タグ対象のコミットが main / develop に含まれることを確認する
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -uo pipefail
+
+          # リリースを許可するブランチ。増やすときはここだけ変える。
+          branches="main develop"
+
+          echo "タグ: ${RELEASE_TAG} (コミット ${GITHUB_SHA})"
+
+          # 履歴が浅いと merge-base はコミットを見つけられず、「含まれない」と
+          # 区別が付かない。「マージし忘れ」と誤って案内しないよう先に切り分ける。
+          if ! git cat-file -e "${GITHUB_SHA}^{commit}" 2>/dev/null; then
+              echo "::error::タグのコミット ${GITHUB_SHA} が手元にありません。checkout の fetch-depth: 0 を確認してください（浅いクローンでは判定できません）。"
+              exit 1
+          fi
+
+          available=0
+          contained=0
+
+          for branch in $branches; do
+              # 比較先が存在すること・最新であることを checkout の設定に
+              # 依存させない。明示的な refspec で必ず取り直す
+              # （fetch-depth を変えても、この判定の前提が崩れないように）。
+              if ! git fetch --no-tags --quiet origin \
+                   "+refs/heads/${branch}:refs/remotes/origin/${branch}"; then
+                  echo "  origin/${branch} : 取得できませんでした（判定から除外）"
+                  continue
+              fi
+              available=$((available + 1))
+
+              # --is-ancestor の終了コード 1 はエラーではなく「祖先ではない」。
+              # set -e を使わないのはこのため。128 などは git 自体の失敗で、
+              # 「含まれない」と混ぜると「マージし忘れ」と誤って案内してしまう。
+              git merge-base --is-ancestor "$GITHUB_SHA" "origin/${branch}"
+              status=$?
+
+              case "$status" in
+                  0)
+                      echo "  origin/${branch} : 含まれる"
+                      contained=$((contained + 1))
+                      ;;
+                  1)
+                      echo "  origin/${branch} : 含まれない"
+                      ;;
+                  *)
+                      echo "::error::origin/${branch} との祖先判定に失敗しました（git の終了コード ${status}）。"
+                      exit "$status"
+                      ;;
+              esac
+          done
+
+          if [ "$available" -eq 0 ]; then
+              echo "::error::リリース対象ブランチ（${branches}）を 1 つも取得できませんでした。判定できないため中止します。"
+              exit 1
+          fi
+
+          if [ "$contained" -eq 0 ]; then
+              echo "::error::タグ ${RELEASE_TAG} のコミットが ${branches} のどちらにも含まれていません。マージしてからタグを打ち直してください: git push --delete origin ${RELEASE_TAG} → PR をマージ → git tag -f ${RELEASE_TAG} <マージ後のコミット> && git push origin ${RELEASE_TAG}"
+              exit 1
+          fi
+
+          echo "OK: リリース対象のコミットです。"
 
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
