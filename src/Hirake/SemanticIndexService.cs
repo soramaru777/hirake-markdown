@@ -133,7 +133,9 @@ public static class SemanticIndexService
         {
             return (empty, null);
         }
-        if (string.IsNullOrEmpty(rootFolder) || !Directory.Exists(rootFolder))
+        // Directory.Exists より先に安全確認を通す。祖先が UNC を指すリンクの
+        // パスをそのまま Exists に渡すと、その時点で SMB へ出る（ISSUE #54）。
+        if (string.IsNullOrEmpty(rootFolder) || !FileTreeItem.IsSafeTraversalRoot(rootFolder))
         {
             return (empty, "検索対象のフォルダがありません");
         }

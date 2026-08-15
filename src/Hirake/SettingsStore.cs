@@ -23,6 +23,12 @@ public sealed class SettingsData
     public bool SidebarVisible { get; set; }
 
     /// <summary>
+    /// symlink / ジャンクションで束ねたフォルダを走査するか。既定は false（辿らない）。
+    /// true にしても、UNC・ネットワークドライブを指すリンクは辿らない（ISSUE #54）。
+    /// </summary>
+    public bool FollowDirectoryLinks { get; set; }
+
+    /// <summary>
     /// 前回セッションのウィンドウ構成（1 要素 = ウィンドウ 1 枚）。
     /// ワークスペースと同じ記述子を使い、復元経路を 1 本にまとめている。
     /// </summary>
@@ -106,6 +112,20 @@ public sealed class SettingsStore
         set
         {
             lock (_lock) { _data.SidebarVisible = value; }
+            ScheduleSave();
+        }
+    }
+
+    /// <summary>
+    /// symlink / ジャンクションで束ねたフォルダを走査するか（ISSUE #54）。
+    /// 設定 UI は無く、settings.json を直接編集して切り替える。
+    /// </summary>
+    public bool FollowDirectoryLinks
+    {
+        get { lock (_lock) { return _data.FollowDirectoryLinks; } }
+        set
+        {
+            lock (_lock) { _data.FollowDirectoryLinks = value; }
             ScheduleSave();
         }
     }

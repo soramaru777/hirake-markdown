@@ -143,14 +143,10 @@ public partial class MainWindow : Window, IDocumentTabHost
                 root = canvas.RootFolder;
                 break;
             case DocumentTab active:
-                try
-                {
-                    root = Path.GetDirectoryName(active.FilePath);
-                }
-                catch
-                {
-                    root = null;
-                }
+                // 検査済みの実パスにしてから使う。素のフォルダ名のまま
+                // Directory.Exists へ渡すと、祖先が UNC を指すリンクだった
+                // 場合にその時点で SMB へ出る（ISSUE #54）。
+                root = ResolveTreeRoot(active.FilePath);
                 break;
             default:
                 root = null;
@@ -239,14 +235,10 @@ public partial class MainWindow : Window, IDocumentTabHost
                 root = canvas.RootFolder;
                 break;
             case DocumentTab active:
-                try
-                {
-                    root = Path.GetDirectoryName(active.FilePath);
-                }
-                catch
-                {
-                    root = null;
-                }
+                // 検査済みの実パスにしてから使う。素のフォルダ名のまま
+                // Directory.Exists へ渡すと、祖先が UNC を指すリンクだった
+                // 場合にその時点で SMB へ出る（ISSUE #54）。
+                root = ResolveTreeRoot(active.FilePath);
                 break;
             default:
                 root = null;
@@ -310,14 +302,10 @@ public partial class MainWindow : Window, IDocumentTabHost
                 root = fingerprint.RootFolder;
                 break;
             case DocumentTab active:
-                try
-                {
-                    root = Path.GetDirectoryName(active.FilePath);
-                }
-                catch
-                {
-                    root = null;
-                }
+                // 検査済みの実パスにしてから使う。素のフォルダ名のまま
+                // Directory.Exists へ渡すと、祖先が UNC を指すリンクだった
+                // 場合にその時点で SMB へ出る（ISSUE #54）。
+                root = ResolveTreeRoot(active.FilePath);
                 break;
             default:
                 root = null;
@@ -392,14 +380,10 @@ public partial class MainWindow : Window, IDocumentTabHost
                 root = stats.RootFolder;
                 break;
             case DocumentTab active:
-                try
-                {
-                    root = Path.GetDirectoryName(active.FilePath);
-                }
-                catch
-                {
-                    root = null;
-                }
+                // 検査済みの実パスにしてから使う。素のフォルダ名のまま
+                // Directory.Exists へ渡すと、祖先が UNC を指すリンクだった
+                // 場合にその時点で SMB へ出る（ISSUE #54）。
+                root = ResolveTreeRoot(active.FilePath);
                 break;
             default:
                 root = null;
@@ -1109,14 +1093,7 @@ public partial class MainWindow : Window, IDocumentTabHost
         string? folder = null;
         if (active != null)
         {
-            try
-            {
-                folder = Path.GetDirectoryName(active.FilePath);
-            }
-            catch
-            {
-                folder = null;
-            }
+            folder = ResolveTreeRoot(active.FilePath);
         }
 
         if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder))
@@ -1189,11 +1166,43 @@ public partial class MainWindow : Window, IDocumentTabHost
         // （このツリーのルートに属している場合のみ）。
         if (TabList.SelectedItem is DocumentTab active
             && string.Equals(
-                Path.GetDirectoryName(active.FilePath),
+                ResolveTreeRoot(active.FilePath),
                 _currentRootFolder,
                 StringComparison.OrdinalIgnoreCase))
         {
             HighlightActiveFile(active.FilePath);
+        }
+    }
+
+    /// <summary>
+    /// タブのファイルが属するツリーのルート。<b>実体のパスで返す。</b>
+    ///
+    /// <see cref="FileTreeItem.LoadChildren"/> は実パスの子を返すので、ルートだけ
+    /// リンクのパスのまま持つと、同一ルート判定とハイライトの比較が食い違い、
+    /// ツリーが作り直され続ける（ISSUE #54）。解決できないものは扱わない。
+    ///
+    /// <para>
+    /// ここは列挙の途中ではなく外から来たパスなので、祖先まで検査する
+    /// <see cref="FileTreeItem.ResolveCheckedPath"/> を使う。末端しか見ない
+    /// <c>ResolveRealPath</c> だと、祖先が UNC を指すリンクのパスを素通しし、
+    /// 直後の <c>Directory.Exists</c> でネットワークへ出てしまう。
+    /// </para>
+    /// </summary>
+    private static string? ResolveTreeRoot(string filePath)
+    {
+        try
+        {
+            string? folder = Path.GetDirectoryName(filePath);
+            if (string.IsNullOrEmpty(folder))
+            {
+                return null;
+            }
+
+            return FileTreeItem.ResolveCheckedPath(folder, isDirectory: true);
+        }
+        catch
+        {
+            return null;
         }
     }
 
@@ -1211,12 +1220,10 @@ public partial class MainWindow : Window, IDocumentTabHost
             return;
         }
 
-        string fullPath;
-        try
-        {
-            fullPath = Path.GetFullPath(filePath);
-        }
-        catch
+        // ツリーの項目は実パスなので、比較する側も実パスに揃える。リンク経由で
+        // 直接開いたファイルは、揃えないと一致せずハイライトされない（ISSUE #54）。
+        string? fullPath = FileTreeItem.ResolveCheckedPath(filePath, isDirectory: false);
+        if (fullPath == null)
         {
             return;
         }
