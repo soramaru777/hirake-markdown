@@ -342,13 +342,14 @@ public sealed class FileTreeItem : INotifyPropertyChanged
     /// </summary>
     private static bool IsFollowableLink(string path, bool isDirectory)
     {
-        if (!SettingsStore.Instance.FollowDirectoryLinks)
+        bool followLinks = SettingsStore.Instance.FollowDirectoryLinks;
+        if (!followLinks)
         {
             return false;
         }
 
         // 解決できた＝祖先も飛び先もすべてローカルだったということ。
-        return CheckTraversalCore(path, isDirectory).IsAllowed;
+        return CheckTraversalCore(path, isDirectory, followLinks).IsAllowed;
     }
 
     /// <summary>
@@ -374,7 +375,7 @@ public sealed class FileTreeItem : INotifyPropertyChanged
     /// 1 ホップずつ受け取れば <c>\\server\share</c> のまま判定できる。
     /// </para>
     /// </summary>
-    private static TraversalCheck CheckTraversalCore(string path, bool isDirectory)
+    private static TraversalCheck CheckTraversalCore(string path, bool isDirectory, bool followLinks)
     {
         char[] separators = { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar };
 
@@ -453,7 +454,7 @@ public sealed class FileTreeItem : INotifyPropertyChanged
                 {
                     // ここまで来た＝経路はすべてローカルで、解決も済んでいる。
                     // リンクを 1 つでも通ったなら、設定に従って可否を決める。
-                    if (sawLink && !SettingsStore.Instance.FollowDirectoryLinks)
+                    if (sawLink && !followLinks)
                     {
                         // 「設定を有効にすれば開ける」と言えるのは、実際に開ける
                         // ときだけ。壊れたリンク（飛び先が無い）でこれを返すと、
@@ -654,7 +655,8 @@ public sealed class FileTreeItem : INotifyPropertyChanged
                 return Path.GetFullPath(path);
             }
 
-            return CheckTraversalCore(path, isDirectory).ResolvedPath;
+            return CheckTraversalCore(
+                path, isDirectory, SettingsStore.Instance.FollowDirectoryLinks).ResolvedPath;
         }
         catch
         {
@@ -681,11 +683,21 @@ public sealed class FileTreeItem : INotifyPropertyChanged
         => CheckTraversal(path, isDirectory).ResolvedPath;
 
     /// <summary>
+    /// 設定値を明示的に受け取る版。<b>SettingsStore の初期化中はこちらを使う。</b>
+    ///
+    /// 初期化中に <see cref="SettingsStore.Instance"/> を引くと、<c>Lazy</c> の
+    /// 再帰取得になって例外が飛ぶ。例外は握り潰されて「解決できなかった」ことに
+    /// なるため、起動時のセッションだけ黙って正規化されない（ISSUE #60）。
+    /// </summary>
+    internal static string? ResolveCheckedPath(string path, bool isDirectory, bool followLinks)
+        => CheckTraversalCore(path, isDirectory, followLinks).ResolvedPath;
+
+    /// <summary>
     /// 走査してよいかを<b>理由つき</b>で判定し、許可なら実パスも返す。
     /// 案内文の出し分けが要る呼び出し側（UI）はこちらを使う。
     /// </summary>
     internal static TraversalCheck CheckTraversal(string path, bool isDirectory)
-        => CheckTraversalCore(path, isDirectory);
+        => CheckTraversalCore(path, isDirectory, SettingsStore.Instance.FollowDirectoryLinks);
 
     /// <summary>
     /// 走査の「起点」として安全なフォルダか。
@@ -717,7 +729,8 @@ public sealed class FileTreeItem : INotifyPropertyChanged
         // 走査した時点でネットワークへ触れる。ネットワークは設定に関係なく拒否し、
         // ローカルのリンクは設定に従う（設定オフなら祖先リンクでも拒否する。
         // ISSUE #61。以前はここを通していたが、設定の意味と食い違っていた）。
-        if (!CheckTraversalCore(path, isDirectory: true).IsAllowed)
+        if (!CheckTraversalCore(
+                path, isDirectory: true, SettingsStore.Instance.FollowDirectoryLinks).IsAllowed)
         {
             return false;
         }

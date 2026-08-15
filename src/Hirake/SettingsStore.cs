@@ -258,7 +258,9 @@ public sealed class SettingsStore
         data.SessionWindows = data.SessionWindows
             .Where(w => w != null)
             .Take(WindowManager.MaxWindows)
-            .Select(WorkspaceStore.NormalizeWindow)
+            // ここは SettingsStore の初期化中。Instance を引くと Lazy の再帰取得で
+            // 例外になるため、読み込んだ設定値をそのまま渡す（ISSUE #60）。
+            .Select(w => WorkspaceStore.NormalizeWindow(w, data.FollowDirectoryLinks))
             .ToList();
 
         // 旧形式（パスの配列）からの移行。1 枚のウィンドウの document タブ列とみなす。
@@ -268,14 +270,26 @@ public sealed class SettingsStore
             var tabs = data.SessionTabs
                 .Where(p => !string.IsNullOrWhiteSpace(p))
                 .Take(WorkspaceStore.MaxTabsPerWorkspace)
-                .Select(p => new TabDescriptor { Kind = TabKinds.Document, Path = p })
+                // ここは NormalizeWindow を通らない経路なので、実体への正規化を
+                // 個別に行う（ISSUE #60）。
+                .Select(p => new TabDescriptor
+                {
+                    Kind = TabKinds.Document,
+                    Path = TabDescriptor.NormalizePath(
+                        p, TabKinds.Document, data.FollowDirectoryLinks),
+                })
                 .ToList();
 
             int activeIndex = 0;
             if (!string.IsNullOrEmpty(data.SessionActiveTab))
             {
+                // タブ側を実体へ直したので、突き合わせる側も同じ形にする。
+                // 揃えないと一致せず、アクティブタブが先頭へ戻る。
+                string activePath = TabDescriptor.NormalizePath(
+                    data.SessionActiveTab, TabKinds.Document, data.FollowDirectoryLinks);
+
                 int found = tabs.FindIndex(
-                    t => string.Equals(t.Path, data.SessionActiveTab, StringComparison.OrdinalIgnoreCase));
+                    t => string.Equals(t.Path, activePath, StringComparison.OrdinalIgnoreCase));
                 if (found >= 0)
                 {
                     activeIndex = found;
