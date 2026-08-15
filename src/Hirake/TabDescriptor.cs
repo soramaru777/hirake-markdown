@@ -68,16 +68,28 @@ public sealed class TabDescriptor
                 return new TabDescriptor
                 {
                     Kind = TabKinds.Canvas,
-                    Path = canvas.RootFolder,
+                    Path = NormalizePath(canvas.RootFolder, TabKinds.Canvas),
                     // 「どこを見ていたか」はワークスペースが持つ（ノード配置は共有のまま）。
                     View = canvas.CurrentView.IsValid() ? canvas.CurrentView : null,
                 };
             case StructureQueryTab structure:
-                return new TabDescriptor { Kind = TabKinds.Structure, Path = structure.RootFolder };
+                return new TabDescriptor
+                {
+                    Kind = TabKinds.Structure,
+                    Path = NormalizePath(structure.RootFolder, TabKinds.Structure),
+                };
             case FingerprintTab fingerprint:
-                return new TabDescriptor { Kind = TabKinds.Fingerprint, Path = fingerprint.RootFolder };
+                return new TabDescriptor
+                {
+                    Kind = TabKinds.Fingerprint,
+                    Path = NormalizePath(fingerprint.RootFolder, TabKinds.Fingerprint),
+                };
             case StatsTab stats:
-                return new TabDescriptor { Kind = TabKinds.Stats, Path = stats.RootFolder };
+                return new TabDescriptor
+                {
+                    Kind = TabKinds.Stats,
+                    Path = NormalizePath(stats.RootFolder, TabKinds.Stats),
+                };
         }
 
         // 素の DocumentTab のみ document として扱う。
@@ -92,7 +104,50 @@ public sealed class TabDescriptor
             return null;
         }
 
-        return new TabDescriptor { Kind = TabKinds.Document, Path = path };
+        return new TabDescriptor
+        {
+            Kind = TabKinds.Document,
+            Path = NormalizePath(path, TabKinds.Document),
+        };
+    }
+
+    /// <summary>
+    /// 保存するパスを実体へ直す。<b>直せなければ元のパスをそのまま返す（捨てない）。</b>
+    ///
+    /// リンクで束ねた vault では、タブのパスがリンク経由のままだと復元時の検査
+    /// （<see cref="HirakeUri.HasLinkInPath"/> 経由）で弾かれ、タブが黙って消える
+    /// （ISSUE #60）。保存の時点で実体にしておけば、検査を緩めずに復元できる。
+    ///
+    /// <para>
+    /// これは<b>検査ではなく最善努力</b>。解決できないもの（UNC・実在しない・
+    /// リンクを辿る設定が無効）を捨てると、設定を入れていない利用者が保存する
+    /// たびにタブを失う。安全性は従来どおり <see cref="CanRestore"/> が見る。
+    /// </para>
+    /// </summary>
+    internal static string NormalizePath(string? path, string kind)
+        => NormalizePath(path, kind, SettingsStore.Instance.FollowDirectoryLinks);
+
+    /// <summary>
+    /// 設定値を明示的に受け取る版。<b>SettingsStore の初期化中はこちらを使う</b>
+    /// （初期化中に <c>SettingsStore.Instance</c> を引くと <c>Lazy</c> の再帰取得で
+    /// 例外になり、起動時のセッションだけ黙って正規化されない）。
+    /// </summary>
+    internal static string NormalizePath(string? path, string kind, bool followLinks)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return path ?? string.Empty;
+        }
+
+        try
+        {
+            return FileTreeItem.ResolveCheckedPath(path, TabKinds.IsFolderScoped(kind), followLinks)
+                ?? path;
+        }
+        catch
+        {
+            return path;
+        }
     }
 
     /// <summary>

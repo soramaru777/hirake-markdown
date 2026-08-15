@@ -279,10 +279,23 @@ public sealed class WorkspaceStore
     }
 
     private static WindowDescriptor TrimWindow(WindowDescriptor window)
+        => TrimWindow(window, SettingsStore.Instance.FollowDirectoryLinks);
+
+    private static WindowDescriptor TrimWindow(WindowDescriptor window, bool followLinks)
     {
         var tabs = (window.Tabs ?? new List<TabDescriptor>())
             .Where(t => t != null && TabKinds.IsKnown(t.Kind) && !string.IsNullOrWhiteSpace(t.Path))
             .Take(MaxTabsPerWorkspace)
+            // 既に保存済みのリンク経由のパスを、読み込み時に実体へ直す（ISSUE #60）。
+            // ファイルへは書き戻さない。起動時に書き込むと、失敗したときに設定を
+            // 壊す方のリスクが大きい。次に保存したときに自然と永続化される。
+            // 元のオブジェクトは書き換えず、複製して返す。
+            .Select(t => new TabDescriptor
+            {
+                Kind = t.Kind,
+                Path = TabDescriptor.NormalizePath(t.Path, t.Kind, followLinks),
+                View = t.View,
+            })
             .ToList();
 
         int activeIndex = window.ActiveIndex;
@@ -318,7 +331,9 @@ public sealed class WorkspaceStore
             // パスとして異常に長いキーは受け付けない（肥大化した JSON への保険）。
             if (!string.IsNullOrEmpty(pair.Key) && pair.Key.Length <= 4096 && double.IsFinite(pair.Value))
             {
-                result[pair.Key] = pair.Value;
+                // キーもタブと同じ実体のパスへ揃える（ISSUE #60）。揃えないと、
+                // タブだけ実体になってスクロール位置が引き当てられなくなる。
+                result[TabDescriptor.NormalizePath(pair.Key, TabKinds.Document)] = pair.Value;
             }
         }
         return result;
@@ -330,7 +345,15 @@ public sealed class WorkspaceStore
     /// 非対称を作らない。
     /// </summary>
     public static WindowDescriptor NormalizeWindow(WindowDescriptor? window) =>
-        TrimWindow(window ?? new WindowDescriptor());
+        NormalizeWindow(window, SettingsStore.Instance.FollowDirectoryLinks);
+
+    /// <summary>
+    /// 設定値を明示的に受け取る版。<b>SettingsStore の初期化中はこちらを使う</b>
+    /// （初期化中に <c>SettingsStore.Instance</c> を引くと <c>Lazy</c> の再帰取得で
+    /// 例外になり、起動時のセッションだけ黙って正規化されない。ISSUE #60）。
+    /// </summary>
+    public static WindowDescriptor NormalizeWindow(WindowDescriptor? window, bool followLinks) =>
+        TrimWindow(window ?? new WindowDescriptor(), followLinks);
 
     private static Workspace Clone(Workspace source) => new()
     {
