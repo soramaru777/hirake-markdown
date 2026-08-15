@@ -62,9 +62,15 @@ public static class FolderSearchService
         string rootFolder, string query, CancellationToken token)
     {
         var results = new List<SearchFileResult>();
-        if (string.IsNullOrEmpty(query)
-            || string.IsNullOrEmpty(rootFolder)
-            || !Directory.Exists(rootFolder))
+        if (string.IsNullOrEmpty(query) || string.IsNullOrEmpty(rootFolder))
+        {
+            return (results, false);
+        }
+
+        // Directory.Exists より先に安全確認を通す。祖先が UNC を指すリンクの
+        // パスをそのまま Exists に渡すと、その時点で SMB へ出る（ISSUE #54）。
+        // 呼び出し側が検査済みかどうかに依存しない（公開の入口なので）。
+        if (!FileTreeItem.IsSafeTraversalRoot(rootFolder))
         {
             return (results, false);
         }
@@ -136,8 +142,27 @@ public static class FolderSearchService
             yield break;
         }
 
+        // リンクを辿る設定のとき、同じ実体を 2 回以上走査しない。相互に指し合う
+        // リンクで止まらなくなるのと、同じファイルが二重に出るのを同時に防ぐ
+        // （ISSUE #54）。設定がオフならリンクは辿らないため、この集合があっても
+        // 挙動は変わらない。
+        //
+        // 深さも覚える。同じ実体へ深い経路と浅い経路の両方から届く場合、深い方を
+        // 先に見ただけで打ち切ると、浅い経路なら深さ上限に収まったはずの配下を
+        // 取りこぼす。より浅く再発見したら積み直す。
+        var visited = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
         var stack = new Stack<(string Dir, int Depth)>();
-        stack.Push((root, 0));
+
+        // 以後は実パスで回す。起点がリンクでも、返すパスを実体に統一する。
+        string? realRoot = FileTreeItem.ResolveRealPath(root, isDirectory: true);
+        if (realRoot == null)
+        {
+            yield break;
+        }
+
+        visited[realRoot] = 0;
+        stack.Push((realRoot, 0));
 
         while (stack.Count > 0)
         {
@@ -156,9 +181,18 @@ public static class FolderSearchService
 
             foreach (var file in files)
             {
-                if (FileTreeItem.IsMarkdownFile(file))
+                if (!FileTreeItem.IsMarkdownFile(file))
                 {
-                    yield return file;
+                    continue;
+                }
+
+                // ファイル symlink も実体で返す。リンクと実体の両方が走査対象に
+                // 入ったとき、同じ文書が 2 件として出るのを防ぐ（ISSUE #54）。
+                string? realFile = FileTreeItem.ResolveRealPath(file, isDirectory: false);
+                if (realFile != null && !visited.ContainsKey(realFile))
+                {
+                    visited[realFile] = depth;
+                    yield return realFile;
                 }
             }
 
@@ -179,10 +213,25 @@ public static class FolderSearchService
 
             foreach (var sub in subdirs)
             {
-                if (!FileTreeItem.ShouldSkipDirectory(sub))
+                if (FileTreeItem.ShouldSkipDirectory(sub))
                 {
-                    stack.Push((sub, depth + 1));
+                    continue;
                 }
+
+                string? realSub = FileTreeItem.ResolveRealPath(sub, isDirectory: true);
+                if (realSub == null)
+                {
+                    continue;
+                }
+
+                int next = depth + 1;
+                if (visited.TryGetValue(realSub, out int seenDepth) && seenDepth <= next)
+                {
+                    continue;
+                }
+
+                visited[realSub] = next;
+                stack.Push((realSub, next));
             }
         }
     }
