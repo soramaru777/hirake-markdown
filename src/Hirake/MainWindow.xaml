@@ -85,6 +85,14 @@
                     <StackPanel Orientation="Horizontal"
                                 Margin="8,4,4,4"
                                 ToolTip="{Binding FilePath}">
+                        <StackPanel.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="この位置へのリンクをコピー"
+                                          Click="CopyDeepLink_Click"
+                                          Tag="{Binding}"
+                                          IsEnabled="{Binding SupportsDeepLink}" />
+                            </ContextMenu>
+                        </StackPanel.ContextMenu>
                         <TextBlock Text="{Binding FileName}"
                                    VerticalAlignment="Center"
                                    MaxWidth="240"
@@ -110,6 +118,76 @@
                             Orientation="Horizontal"
                             VerticalAlignment="Center">
 
+                    <Button x:Name="GraphButton"
+                            Click="GraphButton_Click"
+                            Content="&#xE9D2;"
+                            FontFamily="Segoe MDL2 Assets"
+                            FontSize="14"
+                            Padding="8,4"
+                            Margin="4,2,0,2"
+                            VerticalAlignment="Center"
+                            BorderThickness="0"
+                            Background="Transparent"
+                            Foreground="{DynamicResource ChromeText}"
+                            Cursor="Hand"
+                            ToolTip="ナレッジグラフ = キャンバスの全体俯瞰 (Ctrl+G)" />
+
+                    <Button x:Name="CanvasButton"
+                            Click="CanvasButton_Click"
+                            Content="&#xE81E;"
+                            FontFamily="Segoe MDL2 Assets"
+                            FontSize="14"
+                            Padding="8,4"
+                            Margin="4,2,0,2"
+                            VerticalAlignment="Center"
+                            BorderThickness="0"
+                            Background="Transparent"
+                            Foreground="{DynamicResource ChromeText}"
+                            Cursor="Hand"
+                            ToolTip="無限キャンバス (Ctrl+Shift+C)" />
+
+                    <Button x:Name="StructureButton"
+                            Click="StructureButton_Click"
+                            Content="&#xE8FD;"
+                            FontFamily="Segoe MDL2 Assets"
+                            FontSize="14"
+                            Padding="8,4"
+                            Margin="4,2,0,2"
+                            VerticalAlignment="Center"
+                            BorderThickness="0"
+                            Background="Transparent"
+                            Foreground="{DynamicResource ChromeText}"
+                            Cursor="Hand"
+                            ToolTip="構造クエリ (Ctrl+Shift+S)" />
+
+                    <Button x:Name="FingerprintButton"
+                            Click="FingerprintButton_Click"
+                            Content="&#xE928;"
+                            FontFamily="Segoe MDL2 Assets"
+                            FontSize="14"
+                            Padding="8,4"
+                            Margin="4,2,0,2"
+                            VerticalAlignment="Center"
+                            BorderThickness="0"
+                            Background="Transparent"
+                            Foreground="{DynamicResource ChromeText}"
+                            Cursor="Hand"
+                            ToolTip="文書指紋・類似検出 (Ctrl+Shift+R)" />
+
+                    <Button x:Name="StatsButton"
+                            Click="StatsButton_Click"
+                            Content="&#xE908;"
+                            FontFamily="Segoe MDL2 Assets"
+                            FontSize="14"
+                            Padding="8,4"
+                            Margin="4,2,0,2"
+                            VerticalAlignment="Center"
+                            BorderThickness="0"
+                            Background="Transparent"
+                            Foreground="{DynamicResource ChromeText}"
+                            Cursor="Hand"
+                            ToolTip="フォルダ統計 (Ctrl+Shift+T)" />
+
                     <Button x:Name="ExportPdfButton"
                             Click="ExportPdfButton_Click"
                             Content="&#xE8A5;"
@@ -123,7 +201,7 @@
                             Foreground="{DynamicResource ChromeText}"
                             Cursor="Hand"
                             IsEnabled="False"
-                            ToolTip="PDF にエクスポート (Ctrl+Shift+E)" />
+                            ToolTip="PDF にエクスポート (Ctrl+Shift+E) / 画面のズーム倍率で出力" />
 
                     <Button x:Name="PrintButton"
                             Click="PrintButton_Click"
@@ -140,6 +218,20 @@
                             IsEnabled="False"
                             ToolTip="印刷 (Ctrl+P)" />
 
+                    <Button x:Name="WorkspaceButton"
+                            Click="WorkspaceButton_Click"
+                            Content="&#xE7C4;"
+                            FontFamily="Segoe MDL2 Assets"
+                            FontSize="14"
+                            Padding="8,4"
+                            Margin="4,2"
+                            VerticalAlignment="Center"
+                            BorderThickness="0"
+                            Background="Transparent"
+                            Foreground="{DynamicResource ChromeText}"
+                            Cursor="Hand"
+                            ToolTip="ワークスペース (Ctrl+Shift+W)" />
+
                     <Button x:Name="ThemeButton"
                             Click="ThemeButton_Click"
                             Content="&#xE793;"
@@ -153,6 +245,121 @@
                             Foreground="{DynamicResource ChromeText}"
                             Cursor="Hand"
                             ToolTip="テーマ: 自動 (Ctrl+Shift+D)" />
+
+                    <!-- ワークスペース一覧。専用の Window クラスは作らず Popup で完結させる
+                         （モーダル入力窓の土台が無いため、既存の作りに合わせる）。 -->
+                    <Popup x:Name="WorkspacePopup"
+                           PlacementTarget="{Binding ElementName=WorkspaceButton}"
+                           Placement="Bottom"
+                           StaysOpen="False"
+                           AllowsTransparency="True"
+                           PopupAnimation="Fade"
+                           Closed="WorkspacePopup_Closed">
+                        <Border Background="{DynamicResource ChromeBarBackground}"
+                                BorderBrush="{DynamicResource ChromeBorder}"
+                                BorderThickness="1"
+                                Padding="6"
+                                MinWidth="280"
+                                MaxWidth="360">
+                            <StackPanel>
+                                <TextBlock Text="ワークスペース"
+                                           Foreground="{DynamicResource ChromeSubText}"
+                                           FontSize="11"
+                                           Margin="4,2,4,6" />
+
+                                <ItemsControl x:Name="WorkspaceList" MaxHeight="320">
+                                    <ItemsControl.Template>
+                                        <ControlTemplate TargetType="ItemsControl">
+                                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                                <ItemsPresenter />
+                                            </ScrollViewer>
+                                        </ControlTemplate>
+                                    </ItemsControl.Template>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="0,1">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+
+                                                <Button Grid.Column="0"
+                                                        Click="WorkspaceOpen_Click"
+                                                        Tag="{Binding Id}"
+                                                        HorizontalContentAlignment="Stretch"
+                                                        Padding="6,4"
+                                                        BorderThickness="0"
+                                                        Background="Transparent"
+                                                        Foreground="{DynamicResource ChromeText}"
+                                                        Cursor="Hand"
+                                                        ToolTip="{Binding Name}">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Text="{Binding OpenMark}"
+                                                                   Width="14"
+                                                                   Foreground="{DynamicResource ChromeSubText}" />
+                                                        <TextBlock Text="{Binding Name}"
+                                                                   TextTrimming="CharacterEllipsis"
+                                                                   MaxWidth="220" />
+                                                        <TextBlock Text="{Binding TabLabel}"
+                                                                   Margin="8,0,0,0"
+                                                                   Foreground="{DynamicResource ChromeSubText}" />
+                                                    </StackPanel>
+                                                </Button>
+
+                                                <Button Grid.Column="1"
+                                                        Click="WorkspaceDelete_Click"
+                                                        Tag="{Binding Id}"
+                                                        Content="&#xE74D;"
+                                                        FontFamily="Segoe MDL2 Assets"
+                                                        FontSize="12"
+                                                        Padding="6,4"
+                                                        BorderThickness="0"
+                                                        Background="Transparent"
+                                                        Foreground="{DynamicResource ChromeSubText}"
+                                                        Cursor="Hand"
+                                                        ToolTip="削除" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <TextBlock x:Name="WorkspaceEmptyText"
+                                           Text="保存されたワークスペースはありません。"
+                                           Foreground="{DynamicResource ChromeSubText}"
+                                           FontSize="11"
+                                           Margin="6,4"
+                                           Visibility="Collapsed" />
+
+                                <Separator Margin="0,6" />
+
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <TextBox x:Name="WorkspaceNameBox"
+                                             Grid.Column="0"
+                                             MaxLength="60"
+                                             Padding="4,3"
+                                             Background="{DynamicResource ChromeInputBackground}"
+                                             Foreground="{DynamicResource ChromeText}"
+                                             BorderBrush="{DynamicResource ChromeBorder}"
+                                             CaretBrush="{DynamicResource ChromeText}"
+                                             VerticalContentAlignment="Center"
+                                             KeyDown="WorkspaceNameBox_KeyDown"
+                                             ToolTip="このウィンドウのタブ構成を名前を付けて保存します" />
+
+                                    <Button Grid.Column="1"
+                                            Click="WorkspaceSave_Click"
+                                            Content="保存"
+                                            Padding="10,3"
+                                            Margin="6,0,0,0"
+                                            Cursor="Hand" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </Popup>
                 </StackPanel>
             </Grid>
         </Border>
@@ -178,31 +385,73 @@
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
-                    <!-- 検索ボックス（プレースホルダをオーバーレイ表示） -->
-                    <Border Grid.Row="0"
-                            Margin="8,8,8,4"
-                            BorderThickness="1"
-                            BorderBrush="{DynamicResource ChromeBorder}"
-                            Background="{DynamicResource ChromeInputBackground}"
-                            CornerRadius="4">
-                        <Grid>
-                            <TextBox x:Name="SearchBox"
-                                     BorderThickness="0"
-                                     Background="Transparent"
-                                     Foreground="{DynamicResource ChromeText}"
-                                     CaretBrush="{DynamicResource ChromeText}"
-                                     Padding="6,5"
-                                     VerticalContentAlignment="Center"
-                                     TextChanged="SearchBox_TextChanged"
-                                     PreviewKeyDown="SearchBox_PreviewKeyDown" />
-                            <TextBlock x:Name="SearchPlaceholder"
-                                       Text="フォルダ内を検索"
-                                       IsHitTestVisible="False"
-                                       Foreground="{DynamicResource ChromeSubText}"
-                                       Padding="8,5"
-                                       VerticalAlignment="Center" />
-                        </Grid>
-                    </Border>
+                    <!-- 検索ボックス（プレースホルダをオーバーレイ表示）＋意味検索トグル -->
+                    <Grid Grid.Row="0" Margin="8,8,8,4">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <Border Grid.Column="0"
+                                BorderThickness="1"
+                                BorderBrush="{DynamicResource ChromeBorder}"
+                                Background="{DynamicResource ChromeInputBackground}"
+                                CornerRadius="4">
+                            <Grid>
+                                <TextBox x:Name="SearchBox"
+                                         BorderThickness="0"
+                                         Background="Transparent"
+                                         Foreground="{DynamicResource ChromeText}"
+                                         CaretBrush="{DynamicResource ChromeText}"
+                                         Padding="6,5"
+                                         VerticalContentAlignment="Center"
+                                         TextChanged="SearchBox_TextChanged"
+                                         PreviewKeyDown="SearchBox_PreviewKeyDown" />
+                                <TextBlock x:Name="SearchPlaceholder"
+                                           Text="フォルダ内を検索"
+                                           IsHitTestVisible="False"
+                                           Foreground="{DynamicResource ChromeSubText}"
+                                           Padding="8,5"
+                                           VerticalAlignment="Center" />
+                            </Grid>
+                        </Border>
+
+                        <!-- 意味（セマンティック）検索トグル。ON のときは Enter で意味検索を実行する。 -->
+                        <ToggleButton x:Name="SemanticToggle"
+                                      Grid.Column="1"
+                                      Margin="4,0,0,0"
+                                      Padding="8,0"
+                                      Cursor="Hand"
+                                      Foreground="{DynamicResource ChromeText}"
+                                      Background="{DynamicResource ChromeInputBackground}"
+                                      BorderBrush="{DynamicResource ChromeBorder}"
+                                      Click="SemanticToggle_Click"
+                                      ToolTip="意味で検索（AI によるセマンティック検索・Enter で実行）">
+                            <ToggleButton.Template>
+                                <ControlTemplate TargetType="ToggleButton">
+                                    <Border x:Name="ToggleBorder"
+                                            CornerRadius="4"
+                                            BorderThickness="1"
+                                            BorderBrush="{TemplateBinding BorderBrush}"
+                                            Background="{TemplateBinding Background}">
+                                        <ContentPresenter HorizontalAlignment="Center"
+                                                          VerticalAlignment="Center"
+                                                          Margin="{TemplateBinding Padding}" />
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsChecked" Value="True">
+                                            <Setter TargetName="ToggleBorder" Property="Background"
+                                                    Value="{DynamicResource ChromeAccent}" />
+                                            <Setter TargetName="ToggleBorder" Property="BorderBrush"
+                                                    Value="{DynamicResource ChromeAccent}" />
+                                            <Setter Property="Foreground" Value="White" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </ToggleButton.Template>
+                            <TextBlock Text="意味" FontSize="12" />
+                        </ToggleButton>
+                    </Grid>
 
                     <!-- ツリー表示（検索が空のとき） -->
                     <Grid x:Name="TreePane" Grid.Row="1">
@@ -319,10 +568,29 @@
                                         <ItemsControl ItemsSource="{Binding Hits}" Margin="0,2,0,0">
                                             <ItemsControl.ItemTemplate>
                                                 <DataTemplate>
+                                                    <!-- ヒット行クリックで該当行へジャンプ（ファイル部クリックとは別動作） -->
+                                                    <!-- Background=Transparent で行全体をヒットテスト可能にする -->
                                                     <TextBlock Text="{Binding Display}"
                                                                FontSize="11"
                                                                TextTrimming="CharacterEllipsis"
-                                                               Foreground="{DynamicResource ChromeSubText}" />
+                                                               Cursor="Hand"
+                                                               Background="Transparent"
+                                                               ToolTip="クリックで該当行へジャンプ"
+                                                               MouseLeftButtonUp="SearchHit_MouseUp">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Foreground"
+                                                                        Value="{DynamicResource ChromeSubText}" />
+                                                                <Style.Triggers>
+                                                                    <Trigger Property="IsMouseOver" Value="True">
+                                                                        <Setter Property="Foreground"
+                                                                                Value="{DynamicResource ChromeAccent}" />
+                                                                        <Setter Property="TextDecorations" Value="Underline" />
+                                                                    </Trigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
                                                 </DataTemplate>
                                             </ItemsControl.ItemTemplate>
                                         </ItemsControl>

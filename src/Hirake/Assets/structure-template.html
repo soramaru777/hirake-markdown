@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="ja" data-theme="{{THEME}}">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="color-scheme" content="light dark">
+<title>{{TITLE}}</title>
+<style>
+  /* ---------------------------------------------------------
+   * Hirake - structure-template.html 用インラインスタイル
+   * 構造クエリビュー専用。style.css は読み込まない。
+   * 配色は CSS カスタムプロパティで定義し、ライト/ダークは
+   * html[data-theme="dark"] で切替える（JS からは色を直接触らない）。
+   * --------------------------------------------------------- */
+  :root {
+    /* ---- ライトテーマ（既定） ---- */
+    --sq-bg: #ffffff;
+    --sq-text: #1f2328;
+    --sq-text-muted: #59636e;
+    --sq-border: #d1d9e0;
+    --sq-toolbar-bg: #f6f8fa;
+    --sq-file-bg: #f6f8fa;
+    --sq-item-hover: #eef2f6;
+    --sq-accent: #0969da;
+    --sq-line-badge: #59636e;
+    --sq-task-done: #1a7f37;
+    --sq-input-bg: #ffffff;
+  }
+
+  /* ---- ダークテーマ（GitHub Dark 風） ---- */
+  html[data-theme="dark"] {
+    --sq-bg: #0d1117;
+    --sq-text: #e6edf3;
+    --sq-text-muted: #8b949e;
+    --sq-border: #30363d;
+    --sq-toolbar-bg: #161b22;
+    --sq-file-bg: #161b22;
+    --sq-item-hover: #1f2630;
+    --sq-accent: #58a6ff;
+    --sq-line-badge: #8b949e;
+    --sq-task-done: #3fb950;
+    --sq-input-bg: #0d1117;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background-color: var(--sq-bg);
+    color: var(--sq-text);
+  }
+
+  body {
+    font-family: -apple-system, "Segoe UI", "Yu Gothic UI", Meiryo, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------- ツールバー ---------- */
+
+  #sq-toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: var(--sq-toolbar-bg);
+    border-bottom: 1px solid var(--sq-border);
+  }
+
+  #sq-toolbar label {
+    color: var(--sq-text-muted);
+    font-size: 12px;
+  }
+
+  #sq-toolbar select,
+  #sq-toolbar input[type="text"] {
+    padding: 4px 8px;
+    border: 1px solid var(--sq-border);
+    border-radius: 6px;
+    background: var(--sq-input-bg);
+    color: var(--sq-text);
+    font-size: 13px;
+    font-family: inherit;
+  }
+
+  #sq-toolbar input[type="text"] {
+    width: 180px;
+  }
+
+  #sq-summary {
+    margin-left: auto;
+    color: var(--sq-text-muted);
+    font-size: 12px;
+  }
+
+  .sq-hidden {
+    display: none !important;
+  }
+
+  /* ---------- 結果一覧 ---------- */
+
+  #sq-results {
+    padding: 8px 16px 32px;
+    max-width: 960px;
+  }
+
+  .sq-file {
+    margin-top: 16px;
+  }
+
+  .sq-file-header {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 4px 8px;
+    background: var(--sq-file-bg);
+    border: 1px solid var(--sq-border);
+    border-radius: 6px;
+    font-weight: 600;
+  }
+
+  .sq-file-header .sq-file-rel {
+    color: var(--sq-text-muted);
+    font-weight: 400;
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sq-file-header .sq-file-count {
+    margin-left: auto;
+    color: var(--sq-text-muted);
+    font-weight: 400;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .sq-item {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+
+  .sq-item:hover {
+    background: var(--sq-item-hover);
+  }
+
+  .sq-item:hover .sq-item-text {
+    color: var(--sq-accent);
+  }
+
+  .sq-item-line {
+    flex: none;
+    min-width: 44px;
+    color: var(--sq-line-badge);
+    font-size: 12px;
+    font-family: Consolas, monospace;
+    text-align: right;
+  }
+
+  .sq-item-text {
+    overflow-wrap: anywhere;
+  }
+
+  .sq-item[data-kind="heading"][data-level="2"] { padding-left: 24px; }
+  .sq-item[data-kind="heading"][data-level="3"] { padding-left: 40px; }
+  .sq-item[data-kind="heading"][data-level="4"],
+  .sq-item[data-kind="heading"][data-level="5"],
+  .sq-item[data-kind="heading"][data-level="6"] { padding-left: 56px; }
+
+  .sq-task-mark {
+    flex: none;
+    font-family: Consolas, monospace;
+    color: var(--sq-text-muted);
+  }
+
+  .sq-item.sq-task-done .sq-task-mark {
+    color: var(--sq-task-done);
+  }
+
+  .sq-item.sq-task-done .sq-item-text {
+    text-decoration: line-through;
+    color: var(--sq-text-muted);
+  }
+
+  mark {
+    background: transparent;
+    color: var(--sq-accent);
+    font-weight: 600;
+  }
+
+  /* ---------- 空状態 ---------- */
+
+  #sq-empty {
+    margin: 48px 16px;
+    color: var(--sq-text-muted);
+    font-size: 14px;
+    text-align: center;
+    display: none;
+  }
+
+  #sq-empty.visible {
+    display: block;
+  }
+</style>
+</head>
+<body>
+
+<div id="sq-toolbar">
+  <label for="sq-mode">クエリ</label>
+  <select id="sq-mode">
+    <option value="heading" selected>見出し</option>
+    <option value="task">タスク</option>
+    <option value="keyword">キーワード</option>
+  </select>
+
+  <select id="sq-heading-level" title="見出しレベル">
+    <option value="all" selected>h1〜h6</option>
+    <option value="1">h1 のみ</option>
+    <option value="2">h2 まで</option>
+    <option value="3">h3 まで</option>
+  </select>
+
+  <select id="sq-task-state" class="sq-hidden" title="タスクの状態">
+    <option value="all" selected>すべて</option>
+    <option value="open">未完了</option>
+    <option value="done">完了</option>
+  </select>
+
+  <input id="sq-keyword" class="sq-hidden" type="text"
+         placeholder="例: TODO" spellcheck="false">
+
+  <span id="sq-summary"></span>
+</div>
+
+<div id="sq-empty"></div>
+
+<div id="sq-results"></div>
+
+<script>window.__structureData = {{DATA}};</script>
+<script src="https://assets.hirake/structure.js" defer></script>
+</body>
+</html>

@@ -197,6 +197,70 @@ body.toc-open .toc-sidebar {
   color: var(--mdv-text-muted);
 }
 
+/* ---------- バックリンク（サイドバー下部） ---------- */
+
+.backlinks-section {
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--mdv-border-muted);
+}
+
+/* サイドバー先頭の「目次」ヘッダは absolute 配置のため、こちらは通常フローで表示する */
+.backlinks-section .toc-sidebar-header {
+  position: static;
+  padding: 0 16px 6px;
+}
+
+.backlinks-content {
+  padding: 0 8px 24px;
+}
+
+.backlinks-content ul {
+  list-style: none;
+  margin: 0;
+  padding-left: 0;
+}
+
+.backlinks-content li {
+  margin: 0;
+}
+
+.backlinks-content a {
+  display: block;
+  padding: 5px 10px;
+  border-radius: 6px;
+  color: var(--mdv-text-muted);
+  text-decoration: none;
+  font-size: 13px;
+  line-height: 1.4;
+  white-space: normal;
+  word-break: break-word;
+  cursor: pointer;
+}
+
+.backlinks-content a:focus:not(:focus-visible) {
+  outline: none;
+}
+
+.backlinks-content a:hover {
+  background: var(--mdv-border-muted);
+  color: var(--mdv-text);
+}
+
+/* ---------- 次に読む（関連文書レコメンド。バックリンクのスタイルを踏襲） ---------- */
+
+.recommend-content .recommend-name {
+  display: block;
+}
+
+/* ファイル名の下に小さく類似度を添える */
+.recommend-content .recommend-score {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  opacity: 0.75;
+}
+
 /* ---------- 検索バー ---------- */
 
 .search-bar {
@@ -590,6 +654,41 @@ mark.mdv-search-hit.current {
   opacity: 0.4;
 }
 
+/* ---------- ズーム倍率バッジ（右下・操作時のみ一時表示） ----------
+   右下は .mdv-meta が占有しているため、その直上へ積む（bottom は
+   viewer.js がメタバーの実高さから決める）。意匠はメタバーと揃える。 */
+
+.mdv-zoom-badge {
+  position: fixed;
+  right: 14px;
+  bottom: 12px; /* 既定値。viewer.js が .mdv-meta の高さに応じて上書きする */
+  /* 目次サイドバー（z-index: 20）より上。ウィンドウ幅がサイドバー幅に近いとき
+     バッジがサイドバーの下に潜って読めなくなるのを防ぐ。小さく pointer-events も
+     無いため、上に載っても操作の邪魔にはならない。 */
+  z-index: 21;
+  padding: 5px 12px;
+  border: 1px solid var(--mdv-border);
+  border-radius: 999px;
+  background-color: var(--mdv-chip-bg);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: 0 2px 8px var(--mdv-shadow);
+  color: var(--mdv-text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  /* 桁が変わっても幅が揺れないようにする（100% ⇄ 90%）。 */
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.mdv-zoom-badge.is-visible {
+  opacity: 1;
+}
+
 /* ---------- KaTeX 数式 ---------- */
 
 /* KaTeX は currentColor 基準で描画されるため、本文色をそのまま継承させる。 */
@@ -615,7 +714,8 @@ html.mdv-printing body {
 
 html.mdv-printing .toc-toggle,
 html.mdv-printing .toc-sidebar,
-html.mdv-printing .search-bar {
+html.mdv-printing .search-bar,
+html.mdv-printing .mdv-zoom-badge {
   display: none !important;
 }
 
@@ -668,7 +768,8 @@ html.mdv-printing .main-content {
   .toc-toggle,
   .toc-sidebar,
   .search-bar,
-  .mdv-meta {
+  .mdv-meta,
+  .mdv-zoom-badge {
     display: none !important;
   }
 

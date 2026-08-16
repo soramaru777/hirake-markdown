@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="ja" data-theme="{{THEME}}">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="color-scheme" content="light dark">
+<title>{{TITLE}}</title>
+<style>
+  /* ---------------------------------------------------------
+   * Hirake - fingerprint-template.html 用インラインスタイル
+   * 文書指紋・類似検出ビュー専用。style.css は読み込まない。
+   * 配色は CSS カスタムプロパティで定義し、ライト/ダークは
+   * html[data-theme="dark"] で切替える（JS からは色を直接触らない）。
+   * --------------------------------------------------------- */
+  :root {
+    /* ---- ライトテーマ（既定） ---- */
+    --fp-bg: #ffffff;
+    --fp-text: #1f2328;
+    --fp-text-muted: #59636e;
+    --fp-border: #d1d9e0;
+    --fp-toolbar-bg: #f6f8fa;
+    --fp-card-bg: #f6f8fa;
+    --fp-item-hover: #eef2f6;
+    --fp-accent: #0969da;
+    --fp-badge-exact-bg: #dafbe1;
+    --fp-badge-exact-text: #1a7f37;
+    --fp-badge-similar-bg: #fff8c5;
+    --fp-badge-similar-text: #9a6700;
+    --fp-line-badge: #59636e;
+    --fp-input-bg: #ffffff;
+  }
+
+  /* ---- ダークテーマ（GitHub Dark 風） ---- */
+  html[data-theme="dark"] {
+    --fp-bg: #0d1117;
+    --fp-text: #e6edf3;
+    --fp-text-muted: #8b949e;
+    --fp-border: #30363d;
+    --fp-toolbar-bg: #161b22;
+    --fp-card-bg: #161b22;
+    --fp-item-hover: #1f2630;
+    --fp-accent: #58a6ff;
+    --fp-badge-exact-bg: #12261e;
+    --fp-badge-exact-text: #3fb950;
+    --fp-badge-similar-bg: #272115;
+    --fp-badge-similar-text: #d29922;
+    --fp-line-badge: #8b949e;
+    --fp-input-bg: #0d1117;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background-color: var(--fp-bg);
+    color: var(--fp-text);
+  }
+
+  body {
+    font-family: -apple-system, "Segoe UI", "Yu Gothic UI", Meiryo, sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------- ツールバー ---------- */
+
+  #fp-toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: var(--fp-toolbar-bg);
+    border-bottom: 1px solid var(--fp-border);
+  }
+
+  #fp-toolbar label {
+    color: var(--fp-text-muted);
+    font-size: 12px;
+  }
+
+  #fp-toolbar select {
+    padding: 4px 8px;
+    border: 1px solid var(--fp-border);
+    border-radius: 6px;
+    background: var(--fp-input-bg);
+    color: var(--fp-text);
+    font-size: 13px;
+    font-family: inherit;
+  }
+
+  #fp-summary {
+    margin-left: auto;
+    color: var(--fp-text-muted);
+    font-size: 12px;
+  }
+
+  /* ---------- グループカード ---------- */
+
+  #fp-results {
+    padding: 8px 16px 32px;
+    max-width: 960px;
+  }
+
+  .fp-group {
+    margin-top: 16px;
+    border: 1px solid var(--fp-border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+
+  .fp-group-header {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 6px 10px;
+    background: var(--fp-card-bg);
+    border-bottom: 1px solid var(--fp-border);
+  }
+
+  .fp-badge {
+    flex: none;
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .fp-badge.exact {
+    background: var(--fp-badge-exact-bg);
+    color: var(--fp-badge-exact-text);
+  }
+
+  .fp-badge.similar {
+    background: var(--fp-badge-similar-bg);
+    color: var(--fp-badge-similar-text);
+  }
+
+  .fp-group-count {
+    color: var(--fp-text-muted);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .fp-group-preview {
+    padding: 6px 10px;
+    color: var(--fp-text-muted);
+    font-size: 12px;
+    border-bottom: 1px solid var(--fp-border);
+    overflow-wrap: anywhere;
+  }
+
+  .fp-member {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 4px 10px;
+    cursor: pointer;
+  }
+
+  .fp-member:hover {
+    background: var(--fp-item-hover);
+  }
+
+  .fp-member:hover .fp-member-name {
+    color: var(--fp-accent);
+  }
+
+  .fp-member-line {
+    flex: none;
+    min-width: 44px;
+    color: var(--fp-line-badge);
+    font-size: 12px;
+    font-family: Consolas, monospace;
+    text-align: right;
+  }
+
+  .fp-member-name {
+    font-weight: 600;
+  }
+
+  .fp-member-rel {
+    color: var(--fp-text-muted);
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* ---------- 空状態 ---------- */
+
+  #fp-empty {
+    margin: 48px 16px;
+    color: var(--fp-text-muted);
+    font-size: 14px;
+    text-align: center;
+    display: none;
+  }
+
+  #fp-empty.visible {
+    display: block;
+  }
+</style>
+</head>
+<body>
+
+<div id="fp-toolbar">
+  <label for="fp-filter">表示</label>
+  <select id="fp-filter">
+    <option value="all" selected>類似含む</option>
+    <option value="exact">完全一致のみ</option>
+  </select>
+
+  <span id="fp-summary"></span>
+</div>
+
+<div id="fp-empty"></div>
+
+<div id="fp-results"></div>
+
+<script>window.__fingerprintData = {{DATA}};</script>
+<script src="https://assets.hirake/fingerprint.js" defer></script>
+</body>
+</html>

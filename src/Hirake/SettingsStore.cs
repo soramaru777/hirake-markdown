@@ -3,6 +3,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Win32;
 
 namespace Hirake;
@@ -20,8 +21,30 @@ public sealed class SettingsData
     public string Theme { get; set; } = "auto";
     public double ZoomFactor { get; set; } = 1.0;
     public bool SidebarVisible { get; set; }
-    public List<string> SessionTabs { get; set; } = new();
+
+    /// <summary>
+    /// symlink / ジャンクションで束ねたフォルダを走査するか。既定は false（辿らない）。
+    /// true にしても、UNC・ネットワークドライブを指すリンクは辿らない（ISSUE #54）。
+    /// </summary>
+    public bool FollowDirectoryLinks { get; set; }
+
+    /// <summary>
+    /// 前回セッションのウィンドウ構成（1 要素 = ウィンドウ 1 枚）。
+    /// ワークスペースと同じ記述子を使い、復元経路を 1 本にまとめている。
+    /// </summary>
+    public List<WindowDescriptor> SessionWindows { get; set; } = new();
+
+    /// <summary>
+    /// 旧形式（1 ウィンドウ分のパス配列）。読み込み時に <see cref="SessionWindows"/> へ
+    /// 移行し、以後は書き出さない。次の版で削除する。
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? SessionTabs { get; set; }
+
+    /// <summary>旧形式のアクティブタブ。<see cref="SessionTabs"/> と同じく移行用。</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SessionActiveTab { get; set; }
+
     public Dictionary<string, FileState> FileStates { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
 }
@@ -34,6 +57,7 @@ public sealed class SettingsData
 public sealed class SettingsStore
 {
     private const int MaxFileStates = 500;
+    private const int MaxFileStateKeyLength = 4096;
     private const int SaveDebounceMs = 1000;
 
     private static readonly Lazy<SettingsStore> LazyInstance = new(() => new SettingsStore());
@@ -53,10 +77,7 @@ public sealed class SettingsStore
 
     private SettingsStore()
     {
-        string directory = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "Hirake");
-        _filePath = Path.Combine(directory, "settings.json");
+        _filePath = AppPaths.SettingsFile;
         _data = Load();
     }
 
@@ -95,16 +116,24 @@ public sealed class SettingsStore
         }
     }
 
-    /// <summary>前回セッションで開いていたタブのパス一覧。</summary>
-    public IReadOnlyList<string> SessionTabs
+    /// <summary>
+    /// symlink / ジャンクションで束ねたフォルダを走査するか（ISSUE #54）。
+    /// 設定 UI は無く、settings.json を直接編集して切り替える。
+    /// </summary>
+    public bool FollowDirectoryLinks
     {
-        get { lock (_lock) { return _data.SessionTabs.ToList(); } }
+        get { lock (_lock) { return _data.FollowDirectoryLinks; } }
+        set
+        {
+            lock (_lock) { _data.FollowDirectoryLinks = value; }
+            ScheduleSave();
+        }
     }
 
-    /// <summary>前回セッションでアクティブだったタブのパス。</summary>
-    public string? SessionActiveTab
+    /// <summary>前回セッションのウィンドウ構成（1 要素 = ウィンドウ 1 枚）。</summary>
+    public IReadOnlyList<WindowDescriptor> SessionWindows
     {
-        get { lock (_lock) { return _data.SessionActiveTab; } }
+        get { lock (_lock) { return _data.SessionWindows.ToList(); } }
     }
 
     // ---- スクロール位置 -----------------------------------------------
@@ -144,13 +173,20 @@ public sealed class SettingsStore
 
     // ---- セッション ---------------------------------------------------
 
-    /// <summary>セッション情報（開いているタブとアクティブタブ）を保存する。</summary>
-    public void SetSession(IEnumerable<string> tabs, string? activeTab)
+    /// <summary>
+    /// セッション情報（開いているウィンドウ構成）を保存する。
+    /// ウィンドウ単位ではなく全ウィンドウ分をまとめて渡すこと。個々のウィンドウが
+    /// 自分の分だけ書き込むと、閉じた順に上書きし合って他のウィンドウが失われる。
+    /// </summary>
+    public void SetSession(IEnumerable<WindowDescriptor> windows)
     {
         lock (_lock)
         {
-            _data.SessionTabs = tabs.ToList();
-            _data.SessionActiveTab = activeTab;
+            _data.SessionWindows = windows.Where(w => w != null).ToList();
+
+            // 旧形式は移行済みとして落とす（次回以降は書き出さない）。
+            _data.SessionTabs = null;
+            _data.SessionActiveTab = null;
         }
         ScheduleSave();
     }
@@ -215,15 +251,85 @@ public sealed class SettingsStore
     {
         data.Theme = string.IsNullOrEmpty(data.Theme) ? "auto" : data.Theme;
         data.ZoomFactor = data.ZoomFactor > 0 ? data.ZoomFactor : 1.0;
-        data.SessionTabs ??= new();
+        data.SessionWindows ??= new();
+
+        // ウィンドウ数とタブ数はワークスペースと同じ上限で正規化する
+        // （settings.json を書き換えて起動時に大量のタブを開かせられないように）。
+        data.SessionWindows = data.SessionWindows
+            .Where(w => w != null)
+            .Take(WindowManager.MaxWindows)
+            // ここは SettingsStore の初期化中。Instance を引くと Lazy の再帰取得で
+            // 例外になるため、読み込んだ設定値をそのまま渡す（ISSUE #60）。
+            .Select(w => WorkspaceStore.NormalizeWindow(w, data.FollowDirectoryLinks))
+            .ToList();
+
+        // 旧形式（パスの配列）からの移行。1 枚のウィンドウの document タブ列とみなす。
+        // 仮想タブの FilePath にはフォルダのパスが入っていたが、種別が分からないため捨てる。
+        if (data.SessionWindows.Count == 0 && data.SessionTabs is { Count: > 0 })
+        {
+            var tabs = data.SessionTabs
+                .Where(p => !string.IsNullOrWhiteSpace(p))
+                .Take(WorkspaceStore.MaxTabsPerWorkspace)
+                // ここは NormalizeWindow を通らない経路なので、実体への正規化を
+                // 個別に行う（ISSUE #60）。
+                .Select(p => new TabDescriptor
+                {
+                    Kind = TabKinds.Document,
+                    Path = TabDescriptor.NormalizePath(
+                        p, TabKinds.Document, data.FollowDirectoryLinks),
+                })
+                .ToList();
+
+            int activeIndex = 0;
+            if (!string.IsNullOrEmpty(data.SessionActiveTab))
+            {
+                // タブ側を実体へ直したので、突き合わせる側も同じ形にする。
+                // 揃えないと一致せず、アクティブタブが先頭へ戻る。
+                string activePath = TabDescriptor.NormalizePath(
+                    data.SessionActiveTab, TabKinds.Document, data.FollowDirectoryLinks);
+
+                int found = tabs.FindIndex(
+                    t => string.Equals(t.Path, activePath, StringComparison.OrdinalIgnoreCase));
+                if (found >= 0)
+                {
+                    activeIndex = found;
+                }
+            }
+
+            data.SessionWindows.Add(new WindowDescriptor
+            {
+                Tabs = tabs,
+                ActiveIndex = activeIndex,
+            });
+        }
+
+        data.SessionTabs = null;
+        data.SessionActiveTab = null;
 
         // FileStates は大文字小文字を無視するコンパレータで作り直す。
+        // 件数・キー長・値の妥当性も読み込み時に検査する。更新時のトリムだけだと、
+        // 書き換えられた settings.json から大量・巨大なキーをそのまま抱え込める。
         var source = data.FileStates ?? new Dictionary<string, FileState>();
         var rebuilt = new Dictionary<string, FileState>(StringComparer.OrdinalIgnoreCase);
-        foreach (var pair in source)
+
+        // 元 JSON は大文字小文字を区別するため、同じファイルを指すキーが複数入り得る。
+        // 先に「キーごとに最新の 1 件」へ畳んでから件数を絞らないと、重複だけで
+        // 上限枠を食い潰したり、古い状態が新しい状態を上書きしたりする。
+        foreach (var group in source
+                     .Where(p => !string.IsNullOrEmpty(p.Key) && p.Key.Length <= MaxFileStateKeyLength)
+                     .GroupBy(p => p.Key, StringComparer.OrdinalIgnoreCase)
+                     .Select(g => g.OrderByDescending(p => p.Value?.LastOpenedUtc ?? DateTime.MinValue).First())
+                     .OrderByDescending(p => p.Value?.LastOpenedUtc ?? DateTime.MinValue)
+                     .Take(MaxFileStates))
         {
-            rebuilt[pair.Key] = pair.Value ?? new FileState();
+            var state = group.Value ?? new FileState();
+            if (!double.IsFinite(state.ScrollY))
+            {
+                state.ScrollY = 0;
+            }
+            rebuilt[group.Key] = state;
         }
+
         data.FileStates = rebuilt;
         return data;
     }

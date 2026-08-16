@@ -2,18 +2,35 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <!-- Windows.Media.Ocr（WinRT）を使うため Windows SDK 版を含むターゲットに変更。
+         TargetPlatformMinVersion で 1809 以降を最小動作環境とする。 -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <UseWPF>true</UseWPF>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>Hirake</AssemblyName>
     <RootNamespace>Hirake</RootNamespace>
     <ApplicationIcon>app.ico</ApplicationIcon>
+
+    <!-- 版の唯一の出所（ISSUE #40 設計 1-2）。
+         インストーラの AppVersion と GitHub Releases のタグ（v1.0.0）は、
+         release.yml がここと一致することを検証したうえで使う。
+         ここを更新したら、対応するタグを push する。 -->
+    <Version>1.0.0</Version>
+    <FileVersion>1.0.0.0</FileVersion>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <InformationalVersion>1.0.0</InformationalVersion>
+    <Product>Hirake</Product>
+    <Company>Hirake</Company>
+    <Copyright>Copyright (c) Hirake contributors</Copyright>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Markdig" Version="0.42.0" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3351.48" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.27.1" />
+    <PackageReference Include="Microsoft.ML.Tokenizers" Version="2.0.0" />
   </ItemGroup>
 
   <!-- Assets は別エージェントが後から配置する。存在しなくてもビルドが通るよう

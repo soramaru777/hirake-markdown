@@ -1,0 +1,296 @@
+# タグ v*.*.* を push すると、インストーラを作って GitHub Releases に添付する。
+#
+# build と package-inno を分けているのは、後から MSIX（ISSUE #40 案2）を
+# package-msix として足せるようにするため。publish 一式は artifact 経由で渡す。
+#
+# Action は完全なコミット SHA で固定している（生成物は利用者が直接実行する
+# 未署名の exe なので、タグの差し替えで中身が変わる経路を減らす）。
+# ただし完全な再現性はまだ無い。ランナーイメージ（windows-latest）、
+# .NET SDK（10.0.x）、Chocolatey から取る Inno Setup の配布物は固定していない。
+#
+# v* タグは打ち直せない・消せない（ISSUE #57）。リポジトリのルールセット
+# protect-release-tags が update と deletion を拒否する。打ち間違えたときは
+# そのタグを残したまま次のパッチ版へ進むこと。
+#
+# ここで塞げるのは「タグの位置がおかしい」ことだけで、権限の分離ではない。
+# ルールセット自体を編集できるのはタグを打つ本人と同じであるため、
+# うっかりを防ぐ柵として扱う。
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# 既定は読み取りのみ。書き込みが要るのは Release を作るジョブだけ。
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # 祖先判定には履歴が要る。既定（1）の浅いクローンでは判定できない。
+          fetch-depth: 0
+
+      # 未マージのコミットにタグを打つと、develop にも main にも入っていない
+      # コードでインストーラができ、下書き Release まで作られる（ISSUE #52）。
+      # ここで落とせば package-inno も publish-release も needs で止まる。
+      #
+      # 見ているのは「どのブランチでタグを作ったか」ではなく「そのコミットが
+      # ブランチに含まれるか」。前者（github.event.base_ref）はタグの作り方に
+      # 依存し、正しいタグが黙って skip される。
+      #
+      # マージコミット運用が前提。squash マージへ変えると、マージ済みでも
+      # 元コミットは祖先にならないため、この検証も見直しが要る。
+      #
+      # ■ これは操作ミスを防ぐためのもので、権限の代わりにはならない
+      # タグ push で起動するワークフローは「タグが指すコミット側の定義」で動く。
+      # つまり、このステップを消したコミットにタグを打てば検証ごと消える。
+      # 悪意ある相手まで止めるには、リポジトリのルールセットで v* タグの
+      # 作成・更新・削除を絞る必要がある（ISSUE #52 では非スコープ）。
+      - name: タグ対象のコミットが main / develop に含まれることを確認する
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -uo pipefail
+
+          # リリースを許可するブランチ。増やすときはここだけ変える。
+          branches="main develop"
+
+          echo "タグ: ${RELEASE_TAG} (コミット ${GITHUB_SHA})"
+
+          # 履歴が浅いと merge-base はコミットを見つけられず、「含まれない」と
+          # 区別が付かない。「マージし忘れ」と誤って案内しないよう先に切り分ける。
+          if ! git cat-file -e "${GITHUB_SHA}^{commit}" 2>/dev/null; then
+              echo "::error::タグのコミット ${GITHUB_SHA} が手元にありません。checkout の fetch-depth: 0 を確認してください（浅いクローンでは判定できません）。"
+              exit 1
+          fi
+
+          available=0
+          contained=0
+
+          for branch in $branches; do
+              # 比較先が存在すること・最新であることを checkout の設定に
+              # 依存させない。明示的な refspec で必ず取り直す
+              # （fetch-depth を変えても、この判定の前提が崩れないように）。
+              if ! git fetch --no-tags --quiet origin \
+                   "+refs/heads/${branch}:refs/remotes/origin/${branch}"; then
+                  echo "  origin/${branch} : 取得できませんでした（判定から除外）"
+                  continue
+              fi
+              available=$((available + 1))
+
+              # --is-ancestor の終了コード 1 はエラーではなく「祖先ではない」。
+              # 128 などは git 自体の失敗で、「含まれない」と混ぜると
+              # 「マージし忘れ」と誤って案内してしまうため、区別して扱う。
+              #
+              # || で受けるのが要点。GitHub Actions の shell: bash は
+              # `bash --noprofile --norc -e -o pipefail` で起動するため、
+              # ここを裸で呼ぶと終了コード 1（＝正常な「含まれない」）で
+              # シェルごと落ちる。set -uo pipefail では -e は解除されない
+              # （ISSUE #66。正しいタグでも必ず失敗し、理由も出なかった）。
+              status=0
+              git merge-base --is-ancestor "$GITHUB_SHA" "origin/${branch}" || status=$?
+
+              case "$status" in
+                  0)
+                      echo "  origin/${branch} : 含まれる"
+                      contained=$((contained + 1))
+                      ;;
+                  1)
+                      echo "  origin/${branch} : 含まれない"
+                      ;;
+                  *)
+                      echo "::error::origin/${branch} との祖先判定に失敗しました（git の終了コード ${status}）。"
+                      exit "$status"
+                      ;;
+              esac
+          done
+
+          if [ "$available" -eq 0 ]; then
+              echo "::error::リリース対象ブランチ（${branches}）を 1 つも取得できませんでした。判定できないため中止します。"
+              exit 1
+          fi
+
+          if [ "$contained" -eq 0 ]; then
+              # v* タグはルールセットで削除も打ち直しもできない（ISSUE #57）。
+              # 「消して打ち直す」と案内すると、できない操作へ誘導してしまう。
+              echo "::error::タグ ${RELEASE_TAG} のコミットが ${branches} のどちらにも含まれていません。このタグは削除も打ち直しもできないため、PR をマージしたうえで、次のパッチ版のタグを新しく作成してください（この Release は作られません）。"
+              exit 1
+          fi
+
+          echo "OK: リリース対象のコミットです。"
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: '10.0.x'
+
+      # 版の出所は csproj だけにする。タグと食い違ったままリリースすると、
+      # 「Releases は 1.0.1 なのに exe のプロパティは 1.0.0」という状態になる。
+      - name: タグと csproj の版が一致することを確認する
+        id: version
+        shell: pwsh
+        # タグ名は env 経由で渡す。スクリプトへ直接展開すると、タグ名に
+        # 単引用符を入れるだけで PowerShell の文字列を抜けて任意の式を書ける。
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $tag = $env:RELEASE_TAG
+          $tagVersion = $tag -replace '^v', ''
+          [xml]$proj = Get-Content src/Hirake/Hirake.csproj
+          $csprojVersion = ($proj.Project.PropertyGroup.Version | Where-Object { $_ }) -as [string]
+
+          Write-Host "タグ: $tag (版 $tagVersion) / csproj: $csprojVersion"
+
+          if ([string]::IsNullOrWhiteSpace($csprojVersion)) {
+              throw 'csproj に <Version> がありません。'
+          }
+          if ($tagVersion -ne $csprojVersion) {
+              throw "タグ ($tagVersion) と csproj の <Version> ($csprojVersion) が一致しません。"
+          }
+          # Inno Setup の VersionInfoVersion は数値のみ。プレリリース表記を
+          # 通すと package-inno まで進んでから落ちる。ここで弾く。
+          if ($tagVersion -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') {
+              throw "版は数値 3〜4 要素で指定してください（例 1.0.0）。指定値: $tagVersion"
+          }
+
+          "version=$tagVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      # 関連付けの登録・解除はインストーラが呼ぶ。壊れたままリリースしない。
+      - name: 関連付けスクリプトのテスト
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File tests/test-association-lib.ps1
+          pwsh -NoProfile -File tests/test-association-flow.ps1
+
+      # インストーラが呼ぶのは Windows PowerShell 5.1（powershell.exe）。
+      # 5.1 は BOM の無い UTF-8 をロケールのコードページとして読むため、
+      # 日本語コメントを含む配布スクリプトは BOM が無いと構文エラーになる。
+      # pwsh のテストだけでは素通りするので、5.1 側も必ず確認する。
+      - name: 配布スクリプトが Windows PowerShell 5.1 で読めることを確認する
+        shell: powershell
+        run: .\tests\test-distributed-scripts.ps1
+
+      - name: 発行（自己完結）
+        shell: pwsh
+        run: dotnet publish src/Hirake -c Release -r win-x64 --self-contained true -o publish
+
+      # フレームワーク依存で誤って発行すると、.NET 10 が入っていない PC で
+      # 起動しないインストーラができあがる。成果物の中身で確かめる。
+      - name: 成果物の検証
+        shell: pwsh
+        run: |
+          if (-not (Test-Path publish/Hirake.exe)) { throw 'publish/Hirake.exe がありません。' }
+          if (-not (Test-Path publish/hostfxr.dll)) { throw 'hostfxr.dll がありません（自己完結で発行されていません）。' }
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: publish
+          path: publish/
+          retention-days: 1
+
+  # 外部から取ってきたビルドツール（Inno Setup）を動かすジョブ。
+  # ここには書き込み権限を渡さない。取得物が侵害された場合でも、
+  # リポジトリや Release へは手が届かないようにする。
+  package-inno:
+    needs: build
+    runs-on: windows-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: publish
+          path: publish
+
+      # windows-latest のランナーに Inno Setup は入っていない。
+      # パッケージマネージャ経由ではなく公式の配布物を固定 URL で取得し、
+      # ハッシュを照合してから実行する。ここで実行されるのは、利用者が直接
+      # 起動する未署名 exe を組み立てるツールなので、取得元を検証する。
+      - name: Inno Setup の導入（ハッシュ照合つき）
+        shell: pwsh
+        env:
+          ISETUP_URL: https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe
+          ISETUP_SHA256: 9C73C3BAE7ED48D44112A0F48E66742C00090BDB5BEF71D9D3C056C66E97B732
+        run: |
+          $installer = Join-Path $env:RUNNER_TEMP 'innosetup.exe'
+          Invoke-WebRequest -Uri $env:ISETUP_URL -OutFile $installer
+
+          $actual = (Get-FileHash $installer -Algorithm SHA256).Hash
+          if ($actual -ne $env:ISETUP_SHA256) {
+              throw "Inno Setup の SHA-256 が一致しません。期待: $($env:ISETUP_SHA256) / 実際: $actual"
+          }
+
+          & $installer /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- | Out-Null
+          # PowerShell はネイティブプロセスの非ゼロ終了を例外にしない。
+          # 途中で中断しても、ファイルが部分的に残れば次の確認を通り得る。
+          if ($LASTEXITCODE -ne 0) {
+              throw "Inno Setup の導入に失敗しました。終了コード: $LASTEXITCODE"
+          }
+          if (-not (Test-Path 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe')) {
+              throw 'ISCC.exe が見つかりません。'
+          }
+
+      - name: インストーラのコンパイル
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
+            "/DAppVersion=${{ needs.build.outputs.version }}" `
+            installer\Hirake.iss
+
+      # 未署名の exe を配るため、利用者が中身を照合できる手段を用意する。
+      - name: SHA-256 を出力する
+        shell: pwsh
+        run: |
+          $file = "dist/HirakeSetup-${{ needs.build.outputs.version }}.exe"
+          $hash = (Get-FileHash $file -Algorithm SHA256).Hash
+          Write-Host "SHA-256: $hash"
+          "$hash  HirakeSetup-${{ needs.build.outputs.version }}.exe" |
+            Out-File -Encoding ascii "dist/HirakeSetup-${{ needs.build.outputs.version }}.exe.sha256"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: installer
+          path: dist/
+          retention-days: 1
+
+  # Release を作るジョブ。書き込み権限を持つのはここだけ。
+  # ここでは第三者の Action もリポジトリのスクリプトも動かさない
+  # （書き込み可能な GITHUB_TOKEN を外部のコードへ渡さないため）。
+  # 使うのは GitHub 提供の download-artifact と、ランナー同梱の gh だけ。
+  publish-release:
+    needs: [build, package-inno]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: installer
+          path: dist
+
+      - name: Release を下書きとして作成する
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          gh release create "$TAG" \
+            --draft \
+            --generate-notes \
+            "dist/HirakeSetup-${VERSION}.exe" \
+            "dist/HirakeSetup-${VERSION}.exe.sha256"
