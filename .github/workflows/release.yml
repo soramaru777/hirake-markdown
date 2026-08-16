@@ -90,10 +90,16 @@ jobs:
               available=$((available + 1))
 
               # --is-ancestor の終了コード 1 はエラーではなく「祖先ではない」。
-              # set -e を使わないのはこのため。128 などは git 自体の失敗で、
-              # 「含まれない」と混ぜると「マージし忘れ」と誤って案内してしまう。
-              git merge-base --is-ancestor "$GITHUB_SHA" "origin/${branch}"
-              status=$?
+              # 128 などは git 自体の失敗で、「含まれない」と混ぜると
+              # 「マージし忘れ」と誤って案内してしまうため、区別して扱う。
+              #
+              # || で受けるのが要点。GitHub Actions の shell: bash は
+              # `bash --noprofile --norc -e -o pipefail` で起動するため、
+              # ここを裸で呼ぶと終了コード 1（＝正常な「含まれない」）で
+              # シェルごと落ちる。set -uo pipefail では -e は解除されない
+              # （ISSUE #66。正しいタグでも必ず失敗し、理由も出なかった）。
+              status=0
+              git merge-base --is-ancestor "$GITHUB_SHA" "origin/${branch}" || status=$?
 
               case "$status" in
                   0)
@@ -116,7 +122,9 @@ jobs:
           fi
 
           if [ "$contained" -eq 0 ]; then
-              echo "::error::タグ ${RELEASE_TAG} のコミットが ${branches} のどちらにも含まれていません。マージしてからタグを打ち直してください: git push --delete origin ${RELEASE_TAG} → PR をマージ → git tag -f ${RELEASE_TAG} <マージ後のコミット> && git push origin ${RELEASE_TAG}"
+              # v* タグはルールセットで削除も打ち直しもできない（ISSUE #57）。
+              # 「消して打ち直す」と案内すると、できない操作へ誘導してしまう。
+              echo "::error::タグ ${RELEASE_TAG} のコミットが ${branches} のどちらにも含まれていません。このタグは削除も打ち直しもできないため、PR をマージしたうえで、次のパッチ版のタグを新しく作成してください（この Release は作られません）。"
               exit 1
           fi
 
