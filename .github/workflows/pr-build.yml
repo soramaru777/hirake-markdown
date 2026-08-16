@@ -1,0 +1,28 @@
+# PR の時点でビルド・テスト・インストーラ作成まで確かめる。
+#
+# これが無かったころは、アプリをビルドする CI が release.yml しかなく、
+# release.yml は push: tags でしか起動しなかった。つまり「ビルドが通るか
+# 確かめる唯一の方法がタグを打つこと」で、しかも v* タグは削除も打ち直しも
+# できない（ISSUE #57）。試す＝取り消せないコミットをする、という順序自体を
+# 直すのがこのワークフロー（ISSUE #70）。
+#
+# 呼ぶのは release.yml と同じ build.yml。定義を 2 か所に書くと必ず乖離し、
+# 「PR は通るがリリースで落ちる」状態になるため。
+name: pr-build
+
+on:
+  pull_request:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+# PR へ続けて push したとき、古い実行を残さない。
+# release.yml には付けない（リリースの実行を後続にキャンセルさせないため）。
+concurrency:
+  group: pr-build-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml

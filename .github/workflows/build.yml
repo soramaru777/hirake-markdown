@@ -1,0 +1,147 @@
+# アプリをビルドし、テストを通し、インストーラまで作る。
+#
+# 単体では起動しない（workflow_call）。リリース（release.yml）と
+# PR（pr-build.yml）の両方がこの 1 本を呼ぶ。
+#
+# 定義を 1 本にまとめているのは、PR 用にコピーすると必ず乖離して
+# 「PR は通るがリリースで落ちる」状態になるため（ISSUE #70）。
+# それでは「タグを打つ前に失敗を知る」という目的が果たせない。
+#
+# ここはタグを知らない。タグ固有の検証（コミットの含有・タグ名との照合）は
+# release.yml の verify-tag が持つ。版はこのワークフローが csproj から読み、
+# outputs.version として返す。
+name: build
+
+on:
+  workflow_call:
+    outputs:
+      version:
+        description: csproj から読んだ版（例 1.0.0）
+        value: ${{ jobs.build.outputs.version }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: '10.0.x'
+
+      # 版の出所は csproj だけにする。ここで読んだ値がインストーラの
+      # VersionInfoVersion にも、リリース時のタグ照合にも使われる。
+      - name: csproj から版を読む
+        id: version
+        shell: pwsh
+        run: |
+          [xml]$proj = Get-Content src/Hirake/Hirake.csproj
+          $version = ($proj.Project.PropertyGroup.Version | Where-Object { $_ }) -as [string]
+
+          if ([string]::IsNullOrWhiteSpace($version)) {
+              throw 'csproj に <Version> がありません。'
+          }
+          # Inno Setup の VersionInfoVersion は数値のみ。プレリリース表記を
+          # 通すとインストーラのコンパイルまで進んでから落ちる。ここで弾く。
+          if ($version -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') {
+              throw "版は数値 3〜4 要素で指定してください（例 1.0.0）。指定値: $version"
+          }
+
+          Write-Host "csproj の版: $version"
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      # 関連付けの登録・解除はインストーラが呼ぶ。壊れたままリリースしない。
+      - name: 関連付けスクリプトのテスト
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File tests/test-association-lib.ps1
+          pwsh -NoProfile -File tests/test-association-flow.ps1
+
+      # インストーラが呼ぶのは Windows PowerShell 5.1（powershell.exe）。
+      # 5.1 は BOM の無い UTF-8 をロケールのコードページとして読むため、
+      # 日本語コメントを含む配布スクリプトは BOM が無いと構文エラーになる。
+      # pwsh のテストだけでは素通りするので、5.1 側も必ず確認する。
+      - name: 配布スクリプトが Windows PowerShell 5.1 で読めることを確認する
+        shell: powershell
+        run: .\tests\test-distributed-scripts.ps1
+
+      - name: 発行（自己完結）
+        shell: pwsh
+        run: dotnet publish src/Hirake -c Release -r win-x64 --self-contained true -o publish
+
+      # フレームワーク依存で誤って発行すると、.NET 10 が入っていない PC で
+      # 起動しないインストーラができあがる。成果物の中身で確かめる。
+      - name: 成果物の検証
+        shell: pwsh
+        run: |
+          if (-not (Test-Path publish/Hirake.exe)) { throw 'publish/Hirake.exe がありません。' }
+          if (-not (Test-Path publish/hostfxr.dll)) { throw 'hostfxr.dll がありません（自己完結で発行されていません）。' }
+
+      # windows-latest のランナーに Inno Setup は入っていない。
+      # パッケージマネージャ経由ではなく公式の配布物を固定 URL で取得し、
+      # ハッシュを照合してから実行する。ここで実行されるのは、利用者が直接
+      # 起動する未署名 exe を組み立てるツールなので、取得元を検証する。
+      #
+      # PR でもこのステップを走らせるのが要点。取得元が差し替えられた場合、
+      # タグを打つ前に気づける（初回のリリースが成功しても消えないリスク）。
+      - name: Inno Setup の導入（ハッシュ照合つき）
+        shell: pwsh
+        env:
+          ISETUP_URL: https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe
+          ISETUP_SHA256: 9C73C3BAE7ED48D44112A0F48E66742C00090BDB5BEF71D9D3C056C66E97B732
+        run: |
+          $installer = Join-Path $env:RUNNER_TEMP 'innosetup.exe'
+          Invoke-WebRequest -Uri $env:ISETUP_URL -OutFile $installer
+
+          $actual = (Get-FileHash $installer -Algorithm SHA256).Hash
+          if ($actual -ne $env:ISETUP_SHA256) {
+              throw "Inno Setup の SHA-256 が一致しません。期待: $($env:ISETUP_SHA256) / 実際: $actual"
+          }
+
+          & $installer /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- | Out-Null
+          # PowerShell はネイティブプロセスの非ゼロ終了を例外にしない。
+          # 途中で中断しても、ファイルが部分的に残れば次の確認を通り得る。
+          if ($LASTEXITCODE -ne 0) {
+              throw "Inno Setup の導入に失敗しました。終了コード: $LASTEXITCODE"
+          }
+          if (-not (Test-Path 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe')) {
+              throw 'ISCC.exe が見つかりません。'
+          }
+
+      - name: インストーラのコンパイル
+        shell: pwsh
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
+            "/DAppVersion=$env:APP_VERSION" `
+            installer\Hirake.iss
+          if ($LASTEXITCODE -ne 0) {
+              throw "インストーラのコンパイルに失敗しました。終了コード: $LASTEXITCODE"
+          }
+
+      # 未署名の exe を配るため、利用者が中身を照合できる手段を用意する。
+      - name: SHA-256 を出力する
+        shell: pwsh
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $file = "dist/HirakeSetup-$env:APP_VERSION.exe"
+          $hash = (Get-FileHash $file -Algorithm SHA256).Hash
+          Write-Host "SHA-256: $hash"
+          "$hash  HirakeSetup-$env:APP_VERSION.exe" |
+            Out-File -Encoding ascii "dist/HirakeSetup-$env:APP_VERSION.exe.sha256"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: installer
+          path: dist/
+          retention-days: 1
