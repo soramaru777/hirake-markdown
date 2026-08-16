@@ -19,8 +19,10 @@ permissions:
 
 # PR へ続けて push したとき、古い実行を残さない。
 # release.yml には付けない（リリースの実行を後続にキャンセルさせないため）。
+# group にワークフロー名を含める。concurrency group はリポジトリ内の
+# 別ワークフローとも共有されるため、将来の名前衝突を避ける。
 concurrency:
-  group: pr-build-${{ github.event.pull_request.number }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
