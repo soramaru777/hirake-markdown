@@ -9,6 +9,7 @@ sources:
   - https://github.com/soramaru777/hirake-markdown/issues/57
   - .github/workflows/release.yml
   - https://github.com/soramaru777/hirake-markdown/issues/66
+  - https://github.com/soramaru777/hirake-markdown/issues/70
 related: [[hirake-build]] [[hirake-file-association]] [[hirake-data-paths]]
 confidence: high
 updated: 2026-08-16
@@ -44,6 +45,22 @@ updated: 2026-08-16
 
 ## リリースの手順と決まりごと
 
+### PR の段階で分かること
+
+develop / main への PR では `pr-build.yml` が走り、**インストーラができるところまで**確かめる（ISSUE #70）。所要は約 2 分半。
+
+- 関連付けスクリプトのテスト / 配布スクリプトの 5.1 検査
+- 自己完結発行と成果物の検証
+- **Inno Setup の取得（固定 URL + SHA-256 照合）とコンパイル**
+
+定義は `build.yml`（`workflow_call`）1 本で、リリースと PR が同じものを呼ぶ。コピーすると乖離して
+「PR は通るがリリースで落ちる」状態になるため。
+
+> **取得元が差し替えられたことに、タグを打つ前に気づける**のが要点。Inno Setup の SHA-256 照合は
+> 初回のリリースが成功しても消えないリスクで、PR で回していれば事前に分かる。
+
+### タグを打つ
+
 `v*` タグを push すると `release.yml` が走り、インストーラを作って**下書きの** Release に添付する。**公開は手動**。
 
 ```powershell
@@ -56,6 +73,7 @@ git push origin v1.0.0
 守る決まりは 3 つ。
 
 1. **タグは `main` または `develop` に含まれるコミットへ打つ。** 未マージの feature へ打つと CI が落ちる（#52）。落ちたらタグの位置が誤っている
+   > PR でも同じビルドが走るようになったため（#70）、ここで初めて失敗する範囲は狭い。
    > この検証は、2026-08-16 まで**正しいタグでも必ず失敗していた**（#66）。GitHub Actions の `shell: bash` が
    > `-e` 付きで起動するため、「含まれない」を表す終了コード 1 でシェルごと落ちていた。原因と対処は
    > `~/wiki/knowledge/github-actions-shell-bash-errexit.md`
