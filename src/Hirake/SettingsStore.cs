@@ -29,6 +29,12 @@ public sealed class SettingsData
     public bool FollowDirectoryLinks { get; set; }
 
     /// <summary>
+    /// <c>[[wikilink]]</c> 記法をリンクとして扱うか。既定は true（ISSUE #53）。
+    /// 通常の Markdown で <c>[[</c> を書く文書のためにオフにできる。
+    /// </summary>
+    public bool WikiLinksEnabled { get; set; } = true;
+
+    /// <summary>
     /// 前回セッションのウィンドウ構成（1 要素 = ウィンドウ 1 枚）。
     /// ワークスペースと同じ記述子を使い、復元経路を 1 本にまとめている。
     /// </summary>
@@ -126,6 +132,21 @@ public sealed class SettingsStore
         set
         {
             lock (_lock) { _data.FollowDirectoryLinks = value; }
+            ScheduleSave();
+        }
+    }
+
+    /// <summary>
+    /// <c>[[wikilink]]</c> をリンクとして扱うか（ISSUE #53）。
+    /// 設定 UI は無く、settings.json を直接編集して切り替える。
+    /// 変更はタブの再読み込みで反映される。
+    /// </summary>
+    public bool WikiLinksEnabled
+    {
+        get { lock (_lock) { return _data.WikiLinksEnabled; } }
+        set
+        {
+            lock (_lock) { _data.WikiLinksEnabled = value; }
             ScheduleSave();
         }
     }

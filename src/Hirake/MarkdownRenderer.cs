@@ -28,7 +28,55 @@ public static class MarkdownRenderer
     internal static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
         .UseAdvancedExtensions()
         .UseYamlFrontMatter()
+        .Use<WikiLinkExtension>()
         .Build();
+
+    /// <summary>
+    /// 解析中ファイルの情報を載せた <see cref="MarkdownParserContext"/> を作る（ISSUE #53）。
+    /// <see cref="WikiLinkParser"/> がこれを見て <c>[[wikilink]]</c> を解決する。
+    /// context を渡さない <c>Markdown.Parse</c>（横断検索・意味索引・統計・構造クエリ）では
+    /// <c>[[...]]</c> に手を出さず、対応前と同じ文字のまま通す。テキスト抽出から
+    /// 文字が消えないようにするため。描画とグラフでは必ず渡すこと。
+    /// </summary>
+    /// <param name="filePath">解析するファイルのパス。</param>
+    /// <param name="root">
+    /// 索引の起点。呼び出し側が既に知っている場合に渡す（グラフ構築など）。
+    /// null のときはここでは推定せず、<c>[[wikilink]]</c> が実際に現れたときに
+    /// パーサ側が 1 回だけ推定する（推定は親フォルダを最大 5 階層列挙するため、
+    /// wikilink を含まない文書の描画で払いたくない）。
+    /// </param>
+    /// <param name="textOnly">
+    /// true なら <c>[[...]]</c> を記法として読むだけでファイルは探さない。
+    /// 見出しテキストの取り出しのように、リンク先が要らない解析で使う
+    /// （索引の構築を UI スレッドのクリック処理へ持ち込まないため）。
+    /// </param>
+    internal static MarkdownParserContext CreateParserContext(
+        string filePath, string? root = null, bool textOnly = false)
+    {
+        var context = new MarkdownParserContext();
+
+        if (textOnly)
+        {
+            context.Properties[WikiLinkParser.TextOnlyKey] = true;
+        }
+
+        string full;
+        try
+        {
+            full = Path.GetFullPath(filePath);
+        }
+        catch
+        {
+            return context;
+        }
+        context.Properties[WikiLinkParser.DocumentPathKey] = full;
+
+        if (!string.IsNullOrEmpty(root))
+        {
+            context.Properties[WikiLinkParser.RootKey] = root;
+        }
+        return context;
+    }
 
     static MarkdownRenderer()
     {
@@ -48,7 +96,7 @@ public static class MarkdownRenderer
         (string? frontMatterYaml, string bodyMarkdown) = SplitFrontMatter(markdown);
 
         // Markdig 側は UseYamlFrontMatter によりフロントマターを HTML 出力しない。
-        string bodyHtml = RenderBodyWithSourceMap(markdown);
+        string bodyHtml = RenderBodyWithSourceMap(markdown, filePath);
         bodyHtml = RewriteAbsolutePaths(bodyHtml, filePath);
 
         string fileName = Path.GetFileName(filePath);
@@ -85,9 +133,9 @@ public static class MarkdownRenderer
     /// viewer.js の sourceToDom / domToSource（ソースマップ基盤）が参照する。
     /// HTML ブロックは Markdig のレンダラが属性を出力しないため対象外。
     /// </summary>
-    private static string RenderBodyWithSourceMap(string markdown)
+    private static string RenderBodyWithSourceMap(string markdown, string filePath)
     {
-        MarkdownDocument document = Markdown.Parse(markdown, Pipeline);
+        MarkdownDocument document = Markdown.Parse(markdown, Pipeline, CreateParserContext(filePath));
 
         foreach (MarkdownObject item in document.Descendants())
         {

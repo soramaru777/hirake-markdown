@@ -35,6 +35,9 @@ Start-Process "hirake://open?path=C%3A%5Cdocs%5Csample.md&line=42"
 
 **`heading` に見出し id（`section-1` 等）ではなく見出しテキストを使う**のは、日本語見出しの id が自動採番になり人間が書けないため。
 
+この照合（`HirakeUri.FindHeadingLine`）は文書内リンクからも使われる。`[[target#見出し]]` と `[表示](target.md#見出し)` は
+どちらもここを通り、URI 経由と同じ規約で位置が決まる（→ [[hirake-wikilinks]]）。
+
 ### workspace
 
 ```

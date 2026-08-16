@@ -157,7 +157,7 @@ public static class LinkGraphService
         {
             token.ThrowIfCancellationRequested();
 
-            foreach (string target in ExtractMarkdownLinkTargets(file))
+            foreach (string target in ExtractMarkdownLinkTargets(file, root))
             {
                 // 解析対象（ルート配下の実在ファイル）へのリンクのみエッジにする。
                 if (!fileSet.TryGetValue(target, out string? canonical))
@@ -221,8 +221,12 @@ public static class LinkGraphService
     /// 1 ファイル内の md 間リンクのターゲット（解決済みフルパス）を列挙する。
     /// 対象は LinkInline（インラインリンクと参照リンク。画像は除外）。
     /// 外部 URL・md 以外の拡張子は無視する。
+    ///
+    /// [[wikilink]] も WikiLinkParser が LinkInline にするため、ここは変更なしで拾える
+    /// （ISSUE #53）。そのために解析コンテキストを渡す必要がある。ルートは Build が
+    /// 既に知っているので再推定させない。
     /// </summary>
-    private static IEnumerable<string> ExtractMarkdownLinkTargets(string filePath)
+    private static IEnumerable<string> ExtractMarkdownLinkTargets(string filePath, string root)
     {
         string text;
         try
@@ -243,7 +247,8 @@ public static class LinkGraphService
             yield break;
         }
 
-        MarkdownDocument document = Markdown.Parse(text, MarkdownRenderer.Pipeline);
+        MarkdownDocument document = Markdown.Parse(
+            text, MarkdownRenderer.Pipeline, MarkdownRenderer.CreateParserContext(filePath, root));
         string baseDirectory = Path.GetDirectoryName(filePath) ?? string.Empty;
 
         foreach (MarkdownObject item in document.Descendants())

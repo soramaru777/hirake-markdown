@@ -403,6 +403,26 @@ mark.mdv-search-hit.current {
   text-decoration: underline;
 }
 
+/* [[wikilink]]（ISSUE #53）。解決したものは通常のリンクと同じ見た目にする。 */
+.markdown-body a.mdv-wikilink {
+  color: var(--mdv-link);
+}
+
+/* 同名が複数あり、どれを開くか一意に決まらなかったもの。開けるが点線で知らせる。 */
+.markdown-body a.mdv-wikilink-ambiguous {
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+
+/* リンク先が見つからないもの。原文（[[...]]）をそのまま出し、書いたのに
+   繋がっていないことが一目で分かるようにする。リンクではないので押せない。 */
+.markdown-body .mdv-wikilink-broken {
+  color: var(--mdv-error-text);
+  text-decoration: underline dashed;
+  text-underline-offset: 2px;
+  cursor: help;
+}
+
 .markdown-body ul,
 .markdown-body ol {
   padding-left: 2em;
