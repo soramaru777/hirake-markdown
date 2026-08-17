@@ -84,3 +84,15 @@
     境界ページは「なぜ書き換えないか」という方針、`hirake-external-editor.md` は「実装した仕組み」。
     前者に残っていた「#55 は未実装」の記述を実装済みへ改め、confidence を medium → high に上げた
     （未実装なのは #56 だけになったため、その節にのみ注記を残す）
+
+2026-08-18 update — ISSUE #56（リンク切れ・孤立ページの検出ビュー）の実装にあわせて更新。
+  - **新規ページ `hirake-link-check.md`。** 「捨てるのをやめる」が起点であること、未解決の理由 4 分類、
+    誤検出させない境界、上限を必ず画面に出す方針、実測値を書いた
+  - **訂正を本文に残した**: ISSUE 起票時の「wikilink 対応が入れば壊れた `[[...]]` も自動的に検出対象に乗る」は誤り。
+    解決できない `[[...]]` は `LinkInline` にならず `HtmlInline`（span）になるため、素通りしていた。
+    `hirake-editing-boundary.md` に残っていた同じ見立ても訂正した
+  - **新たに見つかった見落とし**: 2MB 超のファイルは以前から中身を 1 行も読んでいなかったが、
+    そのことがどこにも出ていなかった。`UnreadableFileCount` として画面に出す設計にした
+  - `hirake-editing-boundary.md` の「#56 は未実装」を実装済みへ改めた（方針は境界ページ、仕組みは新ページ）
+  - `hirake-knowledge-exploration.md` / `hirake-shortcuts.md` / `hirake-viewer-features.md` に
+    Ctrl+Shift+L と仮想タブ「リンク検出」を追加

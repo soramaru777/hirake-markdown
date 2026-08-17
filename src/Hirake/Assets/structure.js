@@ -333,6 +333,11 @@
         postToHost({ type: 'shortcut', action: 'toggleStructureView' });
         return;
       }
+      if (key === 'l') {
+        event.preventDefault();
+        postToHost({ type: 'shortcut', action: 'toggleLinkCheckView' });
+        return;
+      }
       if (key === 'r') {
         event.preventDefault();
         postToHost({ type: 'shortcut', action: 'toggleFingerprintView' });

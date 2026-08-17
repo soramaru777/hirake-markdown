@@ -12,6 +12,37 @@ using Markdig.Syntax.Inlines;
 namespace Hirake;
 
 /// <summary>
+/// 解決できなかった <c>[[wikilink]]</c>（ISSUE #53）。
+///
+/// 表示は従来どおり「原文をそのまま見せる span」で、<see cref="HtmlInline"/> の
+/// 派生型にしただけ。<b>描画結果は基底クラスと完全に同じ</b>（レンダラの選択は
+/// 基底クラス一致で行われるため）。型として残す理由は、リンク切れ検出
+/// （<see cref="LinkGraphService"/>、ISSUE #56）が「何を探して見つからなかったか」を
+/// AST から取り出せるようにするため。
+///
+/// span の HTML を文字列として拾ってクラス名で判別する方法もあるが、
+/// title 属性の文言や HTML エスケープに依存して静かに壊れるため採らない。
+/// </summary>
+internal sealed class BrokenWikiLinkInline : HtmlInline
+{
+    public BrokenWikiLinkInline(string tag) : base(tag)
+    {
+    }
+
+    /// <summary>探した名前（<c>[[名前|表示名]]</c> の名前側。見出し部分は含まない）。</summary>
+    public string Target { get; init; } = string.Empty;
+
+    /// <summary>書かれていたままの原文（<c>[[...]]</c> 全体）。一覧にはこちらを出す。</summary>
+    public string RawText { get; init; } = string.Empty;
+
+    /// <summary>
+    /// 索引が走査をやり切ったか。false のときは「リンク先が無い」と断定してはいけない
+    /// （未列挙の範囲にあるかもしれない）。
+    /// </summary>
+    public bool IndexComplete { get; init; } = true;
+}
+
+/// <summary>
 /// <c>[[wikilink]]</c> を Markdig の AST に <see cref="LinkInline"/> として載せるパーサ（ISSUE #53）。
 ///
 /// 独自の要素を作らず <see cref="LinkInline"/> にするのが要点。こうすると
@@ -155,7 +186,7 @@ internal sealed class WikiLinkParser : InlineParser
             // 解決できないものはリンクにしない。href の無い <a> を作ると、
             // 「リンクに見えるのに動かない」要素になってしまう。
             processor.Inline = BuildBrokenInline(
-                raw, span, line, column, resolution.IndexComplete);
+                raw, name, span, line, column, resolution.IndexComplete);
             slice.Start = closeIndex + 2;
             return true;
         }
@@ -164,7 +195,7 @@ internal sealed class WikiLinkParser : InlineParser
         if (url == null)
         {
             processor.Inline = BuildBrokenInline(
-                raw, span, line, column, indexComplete: true);
+                raw, name, span, line, column, indexComplete: true);
             slice.Start = closeIndex + 2;
             return true;
         }
@@ -209,16 +240,20 @@ internal sealed class WikiLinkParser : InlineParser
     /// あるかもしれないため、そう書く）。
     /// </summary>
     private static HtmlInline BuildBrokenInline(
-        string raw, Markdig.Syntax.SourceSpan span, int line, int column, bool indexComplete)
+        string raw, string target, Markdig.Syntax.SourceSpan span, int line, int column,
+        bool indexComplete)
     {
         string encoded = WebUtility.HtmlEncode(raw);
         string title = indexComplete
             ? "リンク先が見つかりません"
             : "リンク索引が最後まで作れていないため、リンク先の有無を確認できません";
-        return new HtmlInline(
+        return new BrokenWikiLinkInline(
             "<span class=\"mdv-wikilink-broken\" title=\"" + title + "\">"
             + encoded + "</span>")
         {
+            Target = target,
+            RawText = raw,
+            IndexComplete = indexComplete,
             Span = span,
             Line = line,
             Column = column,

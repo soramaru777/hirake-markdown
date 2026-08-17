@@ -157,6 +157,9 @@ public partial class MainWindow : Window, IDocumentTabHost
             case CanvasTab canvas:
                 root = canvas.RootFolder;
                 break;
+            case LinkCheckTab linkCheck:
+                root = linkCheck.RootFolder;
+                break;
             case DocumentTab active:
                 // 検査済みの実パスにしてから使う。素のフォルダ名のまま
                 // Directory.Exists へ渡すと、祖先が UNC を指すリンクだった
@@ -257,6 +260,9 @@ public partial class MainWindow : Window, IDocumentTabHost
             case CanvasTab canvas:
                 root = canvas.RootFolder;
                 break;
+            case LinkCheckTab linkCheck:
+                root = linkCheck.RootFolder;
+                break;
             case DocumentTab active:
                 // 検査済みの実パスにしてから使う。素のフォルダ名のまま
                 // Directory.Exists へ渡すと、祖先が UNC を指すリンクだった
@@ -324,6 +330,9 @@ public partial class MainWindow : Window, IDocumentTabHost
             case FingerprintTab fingerprint:
                 root = fingerprint.RootFolder;
                 break;
+            case LinkCheckTab linkCheck:
+                root = linkCheck.RootFolder;
+                break;
             case DocumentTab active:
                 // 検査済みの実パスにしてから使う。素のフォルダ名のまま
                 // Directory.Exists へ渡すと、祖先が UNC を指すリンクだった
@@ -371,6 +380,79 @@ public partial class MainWindow : Window, IDocumentTabHost
 
     private void StatsButton_Click(object sender, RoutedEventArgs e) => OpenStatsView();
 
+    // ---- リンク切れ・孤立ページの検出ビュー -----------------------------
+
+    /// <summary>
+    /// アクティブタブのファイルが属するフォルダを起点にリンク検出ビューを開く（ISSUE #56）。
+    /// スコープ決定は他の仮想タブと同じ規則。
+    /// 同一フォルダの検出タブが既にあればアクティブ化のみ行う。
+    /// </summary>
+    private void OpenLinkCheckView()
+    {
+        string? root;
+        switch (TabList.SelectedItem)
+        {
+            case LinkCheckTab:
+                return; // 既にリンク検出ビューがアクティブ。
+            case StructureQueryTab structure:
+                root = structure.RootFolder;
+                break;
+            case FingerprintTab fingerprint:
+                root = fingerprint.RootFolder;
+                break;
+            case StatsTab stats:
+                root = stats.RootFolder;
+                break;
+            case CanvasTab canvas:
+                root = canvas.RootFolder;
+                break;
+            case DocumentTab active:
+                // 検査済みの実パスにしてから使う。素のフォルダ名のまま
+                // Directory.Exists へ渡すと、祖先が UNC を指すリンクだった
+                // 場合にその時点で SMB へ出る（ISSUE #54）。
+                root = ResolveTreeRootOrHint(active.FilePath);
+                break;
+            default:
+                root = null;
+                break;
+        }
+        root ??= _currentRootFolder;
+
+        if (string.IsNullOrEmpty(root) || !Directory.Exists(root))
+        {
+            return;
+        }
+
+        OpenLinkCheckForRoot(root);
+    }
+
+    /// <summary>指定フォルダでリンク検出ビューを開く（既にあればアクティブ化）。</summary>
+    private void OpenLinkCheckForRoot(string root)
+    {
+        if (ResolveVirtualTabRoot(root) is not string fullRoot)
+        {
+            return;
+        }
+
+        var existing = Tabs.OfType<LinkCheckTab>().FirstOrDefault(
+            t => string.Equals(t.RootFolder, fullRoot, StringComparison.OrdinalIgnoreCase));
+        if (existing != null)
+        {
+            TabList.SelectedItem = existing;
+            return;
+        }
+
+        var tab = new LinkCheckTab(fullRoot, this, _assetsDirectory, _tempDirectory);
+        tab.WebView.Visibility = Visibility.Collapsed;
+        WebViewHost.Children.Add(tab.WebView);
+        Tabs.Add(tab);
+        TabList.SelectedItem = tab;
+
+        UpdateEmptyState();
+    }
+
+    private void LinkCheckButton_Click(object sender, RoutedEventArgs e) => OpenLinkCheckView();
+
     // ---- 無限キャンバス・モード ---------------------------------------
 
     /// <summary>
@@ -401,6 +483,9 @@ public partial class MainWindow : Window, IDocumentTabHost
                 break;
             case StatsTab stats:
                 root = stats.RootFolder;
+                break;
+            case LinkCheckTab linkCheck:
+                root = linkCheck.RootFolder;
                 break;
             case DocumentTab active:
                 // 検査済みの実パスにしてから使う。素のフォルダ名のまま
@@ -1026,6 +1111,10 @@ public partial class MainWindow : Window, IDocumentTabHost
                     OpenStructureView();
                     e.Handled = true;
                     return;
+                case Key.L:
+                    OpenLinkCheckView();
+                    e.Handled = true;
+                    return;
                 case Key.R:
                     OpenFingerprintView();
                     e.Handled = true;
@@ -1227,6 +1316,8 @@ public partial class MainWindow : Window, IDocumentTabHost
     public void ShortcutToggleGraphView() => OpenCanvasOverview();
 
     public void ShortcutToggleStructureView() => OpenStructureView();
+
+    public void ShortcutToggleLinkCheckView() => OpenLinkCheckView();
 
     public void ShortcutToggleFingerprintView() => OpenFingerprintView();
 
@@ -1998,6 +2089,9 @@ public partial class MainWindow : Window, IDocumentTabHost
                         break;
                     case TabKinds.Stats:
                         OpenStatsForRoot(tab.Path);
+                        break;
+                    case TabKinds.LinkCheck:
+                        OpenLinkCheckForRoot(tab.Path);
                         break;
                 }
 

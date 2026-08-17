@@ -30,6 +30,7 @@ README の一覧をそのまま保持したもの。機能の説明は各ペー�
 | Ctrl+Shift+F | フォルダ内横断検索 | [[hirake-knowledge-exploration]] |
 | Ctrl+G | ナレッジグラフ（キャンバスの全体俯瞰）を開く | [[hirake-canvas]] |
 | Ctrl+Shift+S | 構造クエリビューを開く | [[hirake-knowledge-exploration]] |
+| Ctrl+Shift+L | リンク切れ・孤立ページの検出ビューを開く | [[hirake-link-check]] |
 | Ctrl+Shift+R | 文書指紋・類似検出ビューを開く | [[hirake-knowledge-exploration]] |
 | Ctrl+Shift+T | フォルダ統計ダッシュボードを開く | [[hirake-knowledge-exploration]] |
 | Ctrl+Shift+C | 無限キャンバス・モードを開く | [[hirake-canvas]] |
