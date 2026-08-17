@@ -594,6 +594,214 @@ public partial class MainWindow : Window, IDocumentTabHost
         }
     }
 
+    // ---- エディタで開く（ISSUE #55） ---------------------------------
+
+    /// <summary>
+    /// いま「エディタで開く」を処理中のタブ。連打・キーリピートで
+    /// 同じファイルを何度も起動しないための門番（UI スレッドからのみ触る）。
+    /// </summary>
+    private readonly HashSet<DocumentTab> _editorLaunching = new();
+
+    /// <summary>ショートカット（Ctrl+E）。viewer.js からの転送もここへ来る。</summary>
+    public void ShortcutOpenInEditor() => OpenActiveInEditor();
+
+    /// <summary>
+    /// タブのコンテキストメニューを開くたびに、「フォルダをエディタで開く」の
+    /// 有効・無効を決める。設定済みのエディタがフォルダを開けない場合
+    /// （サクラエディタ・メモ帳など FolderArgs が空）に押せてしまうと、
+    /// 毎回エラーになるだけで何もできない。
+    /// エディタ未設定のときは押せるままにする（押すと選択画面へ入れるため）。
+    /// </summary>
+    private void TabContextMenu_Opened(object sender, RoutedEventArgs e)
+    {
+        if (sender is not ContextMenu menu)
+        {
+            return;
+        }
+
+        // 未設定の判定は ResolveEditor と同じにする。ExePath が空の壊れた設定を
+        // 「設定済み」と見なすと、メニューが無効のまま選び直せなくなる。
+        EditorSettings? editor = SettingsStore.Instance.Editor;
+        bool unset = editor == null || string.IsNullOrWhiteSpace(editor.ExePath);
+        bool canOpenFolder = unset || (editor!.FolderArgs?.Count ?? 0) > 0;
+
+        foreach (object item in menu.Items)
+        {
+            if (item is MenuItem { CommandParameter: "openFolder" } folderItem)
+            {
+                folderItem.IsEnabled =
+                    canOpenFolder && folderItem.Tag is DocumentTab { SupportsDeepLink: true };
+            }
+        }
+    }
+
+    private void OpenInEditor_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: DocumentTab tab })
+        {
+            _ = RunOpenInEditorAsync(tab);
+        }
+    }
+
+    private void OpenFolderInEditor_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: DocumentTab tab } || !tab.SupportsDeepLink)
+        {
+            return;
+        }
+
+        EditorSettings? editor = ResolveEditor();
+        if (editor == null)
+        {
+            return; // 未設定のまま（利用者がキャンセルした）。
+        }
+
+        string? folder = Path.GetDirectoryName(tab.FilePath);
+        if (string.IsNullOrEmpty(folder))
+        {
+            return;
+        }
+
+        if (!EditorLauncher.TryOpenFolder(editor, folder, out string error))
+        {
+            ShowEditorError(editor, error);
+        }
+    }
+
+    private void OpenActiveInEditor()
+    {
+        if (TabList.SelectedItem is DocumentTab tab)
+        {
+            _ = RunOpenInEditorAsync(tab);
+        }
+    }
+
+    /// <summary>
+    /// 投げっぱなしにする非同期処理は、例外を必ずここで受ける。
+    /// 受けないと未観測の例外として消え、利用者から見れば「押しても何も起きない」に
+    /// なる。ISSUE #55 が最も避けたい状態なので、握らずに見せて記録する。
+    /// </summary>
+    private async Task RunOpenInEditorAsync(DocumentTab tab)
+    {
+        // 行の取得は非同期なので、その間に Ctrl+E を連打（キーリピート含む）されると
+        // 待っている分だけエディタが起動してしまう。タブ単位で 1 回に絞る。
+        if (!_editorLaunching.Add(tab))
+        {
+            return;
+        }
+
+        try
+        {
+            await OpenInEditorAsync(tab).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            Diagnostics.Record("editor", "エディタで開く処理が失敗しました", ex);
+            MessageBox.Show(
+                this,
+                "エディタで開けませんでした。" + Environment.NewLine + Environment.NewLine + ex.Message,
+                "エディタで開く",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+        finally
+        {
+            _editorLaunching.Remove(tab);
+        }
+    }
+
+    /// <summary>
+    /// いま読んでいる行を外部エディタで開く。
+    /// 行が取れなくてもファイルは開く（開けないより、先頭で開く方がよい）。
+    /// </summary>
+    private async Task OpenInEditorAsync(DocumentTab tab)
+    {
+        if (!tab.SupportsDeepLink)
+        {
+            return; // 仮想タブ（実ファイルなし）。メニューは無効化済みだが念のため。
+        }
+
+        EditorSettings? editor = ResolveEditor();
+        if (editor == null)
+        {
+            return;
+        }
+
+        int? line = null;
+        try
+        {
+            line = await tab.GetCurrentSourceLineAsync().ConfigureAwait(true);
+        }
+        catch
+        {
+            // 行が取れなくてもファイル単位では開ける。
+        }
+
+        // 行を取っている間にタブが閉じられていたら、もう開かない。
+        // 閉じたのに数秒後にエディタが開く方が驚かれる（破棄済み WebView の例外は
+        // GetCurrentSourceLineAsync が null に変換するため、ここで見ないと素通りする）。
+        if (!TabList.Items.Contains(tab))
+        {
+            return;
+        }
+
+        if (!EditorLauncher.TryOpenFile(editor, tab.FilePath, line, out string error))
+        {
+            ShowEditorError(editor, error);
+        }
+    }
+
+    /// <summary>
+    /// 設定済みのエディタを返す。未設定なら 1 回だけ検出して選ばせ、保存する。
+    /// 検出は起動時ではなくここで走らせる（使わない人に払わせない）。
+    /// </summary>
+    private EditorSettings? ResolveEditor()
+    {
+        EditorSettings? editor = SettingsStore.Instance.Editor;
+        if (editor != null && !string.IsNullOrWhiteSpace(editor.ExePath))
+        {
+            return editor;
+        }
+
+        IReadOnlyList<EditorCandidate> candidates;
+        try
+        {
+            candidates = EditorDetector.Detect(EditorPresets.Load(_assetsDirectory));
+        }
+        catch (Exception ex)
+        {
+            Diagnostics.Record("editor", "エディタの検出に失敗しました", ex);
+            candidates = Array.Empty<EditorCandidate>();
+        }
+
+        var picker = new EditorPickerWindow(candidates) { Owner = this };
+        if (picker.ShowDialog() != true || picker.Selected == null)
+        {
+            return null;
+        }
+
+        SettingsStore.Instance.Editor = picker.Selected;
+        return picker.Selected;
+    }
+
+    /// <summary>
+    /// 失敗を黙らせない。何を実行しようとしたのかまで見せないと、
+    /// 設定が悪いのか、エディタが無いのか、パスが違うのかを切り分けられない。
+    /// </summary>
+    private void ShowEditorError(EditorSettings editor, string error)
+    {
+        MessageBox.Show(
+            this,
+            "エディタを起動できませんでした。" + Environment.NewLine + Environment.NewLine
+            + $"エディタ: {editor.Name}" + Environment.NewLine
+            + $"実行ファイル: {editor.ExePath}" + Environment.NewLine + Environment.NewLine
+            + $"理由: {error}" + Environment.NewLine + Environment.NewLine
+            + "設定は settings.json の Editor にあります。選び直すには、その項目を削除してください。",
+            "エディタで開く",
+            MessageBoxButton.OK,
+            MessageBoxImage.Warning);
+    }
+
     private void PrintButton_Click(object sender, RoutedEventArgs e)
     {
         PrintActiveTab();
@@ -787,6 +995,7 @@ public partial class MainWindow : Window, IDocumentTabHost
         bool ctrl = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
         bool shift = (Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift;
 
+
         if (!ctrl)
         {
             return;
@@ -853,6 +1062,16 @@ public partial class MainWindow : Window, IDocumentTabHost
             case Key.O:
                 ShowOpenDialog();
                 e.Handled = true;
+                break;
+            case Key.E:
+                // 押しっぱなしの自動リピートは 1 回ぶんとして扱う（ISSUE #55）。
+                // 「押した回数だけプロセスが起動する」操作なのでここだけ抑える。
+                // Handled はリピートでも立てる（本文へキーが漏れないように）。
+                e.Handled = true;
+                if (!e.IsRepeat)
+                {
+                    OpenActiveInEditor();
+                }
                 break;
             case Key.P:
                 PrintActiveTab();

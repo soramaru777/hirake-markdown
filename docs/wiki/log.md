@@ -72,3 +72,15 @@
     ルールセット ID に紐づいており、汎用形に切り出すには 2 例目が要ると判断した
   - この会話は `docs/raw/` に置いていない。`docs/raw/README.md` が「LLM はここを読むだけ」と定めているため、
     出典は ISSUE の URL を使った（過去 2 回の会話取り込みと同じ扱い）
+
+2026-08-18 update — ISSUE #55（読んでいる位置を外部エディタで開く）の実装にあわせて更新。
+  - **新規ページ `hirake-external-editor.md`。** コマンドラインを組み立てない理由、UseShellExecute を false 固定にする理由、
+    検出の 3 経路、プリセットを検証済みだけに絞る方針、Ctrl+E が 2 経路要ることを書いた
+  - `hirake-viewer-features.md` に「エディタで開く（Ctrl+E）」を追加
+  - `hirake-shortcuts.md` に Ctrl+E を追加し、「WebView2 にフォーカスがあると届かない」キーの一覧へ Ctrl+E を加えた
+  - **実測を本文に残した**: App Paths の登録は開発機で 84 件あるが、インストール済みの VS Code もサクラエディタも含まれていない。
+    検出を App Paths だけに頼ると取りこぼす、という根拠
+  - **`hirake-editing-boundary.md` との住み分けを整理した**（develop のマージ時）。
+    境界ページは「なぜ書き換えないか」という方針、`hirake-external-editor.md` は「実装した仕組み」。
+    前者に残っていた「#55 は未実装」の記述を実装済みへ改め、confidence を medium → high に上げた
+    （未実装なのは #56 だけになったため、その節にのみ注記を残す）

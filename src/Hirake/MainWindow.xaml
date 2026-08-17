@@ -86,10 +86,20 @@
                                 Margin="8,4,4,4"
                                 ToolTip="{Binding FilePath}">
                         <StackPanel.ContextMenu>
-                            <ContextMenu>
+                            <ContextMenu Opened="TabContextMenu_Opened">
                                 <MenuItem Header="この位置へのリンクをコピー"
                                           Click="CopyDeepLink_Click"
                                           Tag="{Binding}"
+                                          IsEnabled="{Binding SupportsDeepLink}" />
+                                <Separator />
+                                <MenuItem Header="エディタで開く (Ctrl+E)"
+                                          Click="OpenInEditor_Click"
+                                          Tag="{Binding}"
+                                          IsEnabled="{Binding SupportsDeepLink}" />
+                                <MenuItem Header="フォルダをエディタで開く"
+                                          Click="OpenFolderInEditor_Click"
+                                          Tag="{Binding}"
+                                          CommandParameter="openFolder"
                                           IsEnabled="{Binding SupportsDeepLink}" />
                             </ContextMenu>
                         </StackPanel.ContextMenu>

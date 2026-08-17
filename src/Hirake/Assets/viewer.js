@@ -17,6 +17,7 @@
  *     { type:'shortcut', action:'nextTab' }          Ctrl+Tab
  *     { type:'shortcut', action:'prevTab' }          Ctrl+Shift+Tab
  *     { type:'shortcut', action:'openFile' }         Ctrl+O
+ *     { type:'shortcut', action:'openInEditor' }     Ctrl+E
  *     { type:'shortcut', action:'quickPaste' }       Ctrl+Shift+V
  *     { type:'shortcut', action:'globalSearch' }     Ctrl+Shift+F
  *     { type:'shortcut', action:'toggleSidebar' }    Ctrl+B
@@ -1281,6 +1282,18 @@
     if (!event.shiftKey && key === 'o') {
       event.preventDefault();
       postToHost({ type: 'shortcut', action: 'openFile' });
+      return;
+    }
+
+    // Ctrl+E: いま読んでいる行を外部エディタで開く（ISSUE #55）。
+    // ここで転送しないと、本文にフォーカスがある通常の状態で効かない。
+    // 押しっぱなしの自動リピートでは送らない（送った回数だけエディタが起動するため）。
+    // preventDefault はリピートでも行う（ブラウザ既定へ漏らさない）。
+    if (!event.shiftKey && key === 'e') {
+      event.preventDefault();
+      if (!event.repeat) {
+        postToHost({ type: 'shortcut', action: 'openInEditor' });
+      }
       return;
     }
 

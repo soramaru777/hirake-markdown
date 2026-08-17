@@ -1,0 +1,125 @@
+{
+  "_comment": [
+    "外部エディタのプリセット（ISSUE #55）。このファイルは編集してかまいません。",
+    "",
+    "editors    … 実機で確認済み。エディタ選択の候補に出ます。",
+    "unverified … 未確認。候補には出ません。使うときは editors 配列へ移してください。",
+    "",
+    "args の書式:",
+    "  {file}   … 開くファイルのフルパス",
+    "  {line}   … いま読んでいる行（1 始まり）",
+    "  {folder} … ファイルのあるフォルダ",
+    "  置換は「配列の 1 要素の中」で行われます。要素を分けて書いてください。",
+    "  例) [\"-g\", \"{file}:{line}\"] は 2 引数として渡ります（空白を含むパスでも壊れません）。",
+    "",
+    "  fileArgs   … 行ジャンプありでファイルを開く",
+    "  noLineArgs … 行が取れなかったとき／supportsLine が false のとき",
+    "  folderArgs … フォルダを開く（空配列ならメニューを無効化）",
+    "",
+    "knownPaths には環境変数を書けます（%LOCALAPPDATA% など）。",
+    ".cmd / .bat は起動対象にしません（exe を指定してください）。"
+  ],
+  "version": 1,
+  "editors": [
+    {
+      "id": "vscode",
+      "name": "Visual Studio Code",
+      "exeNames": ["Code.exe"],
+      "knownPaths": [
+        "%LOCALAPPDATA%\\Programs\\Microsoft VS Code\\Code.exe",
+        "%ProgramFiles%\\Microsoft VS Code\\Code.exe",
+        "%ProgramFiles(x86)%\\Microsoft VS Code\\Code.exe"
+      ],
+      "fileArgs": ["-g", "{file}:{line}"],
+      "noLineArgs": ["{file}"],
+      "folderArgs": ["{folder}"],
+      "supportsLine": true,
+      "verified": "2026-08-17"
+    },
+    {
+      "id": "sakura",
+      "name": "サクラエディタ",
+      "exeNames": ["sakura.exe"],
+      "knownPaths": [
+        "%ProgramFiles(x86)%\\sakura\\sakura.exe",
+        "%ProgramFiles%\\sakura\\sakura.exe"
+      ],
+      "fileArgs": ["-Y={line}", "{file}"],
+      "noLineArgs": ["{file}"],
+      "folderArgs": [],
+      "supportsLine": true,
+      "verified": "2026-08-17"
+    },
+    {
+      "id": "notepad",
+      "name": "メモ帳",
+      "exeNames": ["notepad.exe"],
+      "knownPaths": ["%SystemRoot%\\system32\\notepad.exe"],
+      "fileArgs": ["{file}"],
+      "noLineArgs": ["{file}"],
+      "folderArgs": [],
+      "supportsLine": false,
+      "verified": "2026-08-17"
+    }
+  ],
+  "unverified": [
+    {
+      "id": "hidemaru",
+      "name": "秀丸エディタ",
+      "exeNames": ["Hidemaru.exe"],
+      "knownPaths": ["%ProgramFiles%\\Hidemaru\\Hidemaru.exe"],
+      "fileArgs": ["{file}", "/j{line}"],
+      "noLineArgs": ["{file}"],
+      "folderArgs": [],
+      "supportsLine": true,
+      "verified": null
+    },
+    {
+      "id": "notepadpp",
+      "name": "Notepad++",
+      "exeNames": ["notepad++.exe"],
+      "knownPaths": [
+        "%ProgramFiles%\\Notepad++\\notepad++.exe",
+        "%ProgramFiles(x86)%\\Notepad++\\notepad++.exe"
+      ],
+      "fileArgs": ["-n{line}", "{file}"],
+      "noLineArgs": ["{file}"],
+      "folderArgs": [],
+      "supportsLine": true,
+      "verified": null
+    },
+    {
+      "id": "emeditor",
+      "name": "EmEditor",
+      "exeNames": ["EmEditor.exe"],
+      "knownPaths": ["%ProgramFiles%\\EmEditor\\EmEditor.exe"],
+      "fileArgs": ["{file}", "/l", "{line}"],
+      "noLineArgs": ["{file}"],
+      "folderArgs": [],
+      "supportsLine": true,
+      "verified": null
+    },
+    {
+      "id": "sublime",
+      "name": "Sublime Text",
+      "exeNames": ["sublime_text.exe"],
+      "knownPaths": ["%ProgramFiles%\\Sublime Text\\sublime_text.exe"],
+      "fileArgs": ["{file}:{line}"],
+      "noLineArgs": ["{file}"],
+      "folderArgs": ["{folder}"],
+      "supportsLine": true,
+      "verified": null
+    },
+    {
+      "id": "gvim",
+      "name": "gVim",
+      "exeNames": ["gvim.exe"],
+      "knownPaths": ["%ProgramFiles%\\Vim\\vim91\\gvim.exe"],
+      "fileArgs": ["+{line}", "{file}"],
+      "noLineArgs": ["{file}"],
+      "folderArgs": [],
+      "supportsLine": true,
+      "verified": null
+    }
+  ]
+}

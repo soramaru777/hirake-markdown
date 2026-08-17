@@ -30,6 +30,7 @@ public interface IDocumentTabHost
     void ShortcutToggleCanvasView();
     void ShortcutToggleWorkspaceMenu();
     void ShortcutNewWindow();
+    void ShortcutOpenInEditor();
     void OnTabZoomChanged(DocumentTab source, double zoomFactor);
 }
 
@@ -1550,6 +1551,9 @@ public class DocumentTab : IDisposable
                     break;
                 case "openFile":
                     _host.ShortcutOpenFile();
+                    break;
+                case "openInEditor":
+                    _host.ShortcutOpenInEditor();
                     break;
                 case "quickPaste":
                     _host.ShortcutQuickPaste();
