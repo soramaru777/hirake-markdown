@@ -6,7 +6,7 @@ scope: shared
 sources:
   - README.md
   - https://github.com/soramaru777/hirake-markdown/issues/54
-related: [[hirake-overview]] [[hirake-canvas]] [[hirake-viewer-features]] [[hirake-directory-links]]
+related: [[hirake-overview]] [[hirake-canvas]] [[hirake-viewer-features]] [[hirake-directory-links]] [[hirake-wikilinks]]
 confidence: high
 updated: 2026-08-16
 ---
@@ -26,7 +26,7 @@ updated: 2026-08-16
 | AI 意味検索 | — | 「認証まわりで例外的な扱いをしている箇所」のような曖昧な日本語で、キーワードが一致しない文書まで引き当てる |
 | 画像内検索（OCR） | — | スクショや図の中の文字を抽出し、キーワード検索・意味検索の両方でヒットさせる |
 | フォルダ内横断検索 | Ctrl+Shift+F | アクティブなファイルのフォルダ配下の `.md` / `.markdown` を再帰検索。ファイルごとにヒット行をプレビュー。文書が参照する画像内の文字（OCR）もヒット対象 |
-| ナレッジグラフ | Ctrl+G | 文書間のリンクを解析して関係を可視化。**無限キャンバスの「全体俯瞰」として開く**（→ [[hirake-canvas]]）。バックリンク一覧を常設表示 |
+| ナレッジグラフ | Ctrl+G | 文書間のリンクを解析して関係を可視化。**無限キャンバスの「全体俯瞰」として開く**（→ [[hirake-canvas]]）。バックリンク一覧を常設表示。`[[wikilink]]` もエッジになる（→ [[hirake-wikilinks]]） |
 | 構造クエリビュー | Ctrl+Shift+S | 全文書から「見出しだけ」「タスク（`- [ ]`）だけ」「TODO 等のキーワードを含むブロックだけ」を横断抽出 |
 | 文書指紋・類似検出 | Ctrl+Shift+R | コピペそのまま・編集して貼った重複記述を検出してグループ表示。ドキュメント資産の重複を棚卸しできる |
 | フォルダ統計ダッシュボード | Ctrl+Shift+T | ファイル数・文字数のサマリ、過去 365 日の更新ヒートマップ、開くたびに育つ推移グラフ、放置文書・ボリューム・未完了タスクのランキング |

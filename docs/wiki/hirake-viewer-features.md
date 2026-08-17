@@ -5,9 +5,9 @@ project: hirake
 scope: shared
 sources:
   - README.md
-related: [[hirake-overview]] [[hirake-shortcuts]] [[hirake-knowledge-exploration]]
+related: [[hirake-overview]] [[hirake-shortcuts]] [[hirake-knowledge-exploration]] [[hirake-wikilinks]]
 confidence: high
-updated: 2026-08-14
+updated: 2026-08-17
 ---
 
 Hirake の「Markdown を表示する」側の機能一覧。知識ベース探索の機能は [[hirake-knowledge-exploration]] に分けてある。
@@ -41,6 +41,8 @@ Hirake の「Markdown を表示する」側の機能一覧。知識ベース探�
 
 - **外部リンクはブラウザで開く** — `http(s)://` はアプリ内で開かず既定のブラウザへ渡す
 - **別ドライブの絶対パスリンク対応** — 別ドライブへの絶対パス `.md` リンクも新しいタブで開ける
+- **`[[wikilink]]` 記法** — `[[ページ名]]` をリンクとして扱う。解決できないものは原文のまま赤い破線で出す → [[hirake-wikilinks]]
+- **`#見出し` つきのリンク** — `[表示](other.md#見出し)` で開いた先の該当位置までスクロールする
 - **自動リロード** — 表示中のファイルが更新されると再読み込みする
 - **二重起動時は既存ウィンドウに新タブ** — 別ファイルを開いてもウィンドウを増やさない（→ [[hirake-multi-window]]）
 
