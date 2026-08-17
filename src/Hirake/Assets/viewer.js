@@ -25,6 +25,7 @@
  *     { type:'shortcut', action:'cycleTheme' }       Ctrl+Shift+D
  *     { type:'shortcut', action:'toggleGraphView' }  Ctrl+G
  *     { type:'shortcut', action:'toggleStructureView' } Ctrl+Shift+S
+ *     { type:'shortcut', action:'toggleLinkCheckView' } Ctrl+Shift+L
  *     { type:'shortcut', action:'toggleFingerprintView' } Ctrl+Shift+R
  *     { type:'shortcut', action:'toggleStatsView' } Ctrl+Shift+T
  *     { type:'shortcut', action:'toggleCanvasView' } Ctrl+Shift+C
@@ -1238,6 +1239,11 @@
       if (key === 's') {
         event.preventDefault();
         postToHost({ type: 'shortcut', action: 'toggleStructureView' });
+        return;
+      }
+      if (key === 'l') {
+        event.preventDefault();
+        postToHost({ type: 'shortcut', action: 'toggleLinkCheckView' });
         return;
       }
       if (key === 'r') {

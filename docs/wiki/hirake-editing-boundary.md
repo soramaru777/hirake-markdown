@@ -7,14 +7,14 @@ sources:
   - README.md
   - https://github.com/soramaru777/hirake-markdown/issues/55
   - https://github.com/soramaru777/hirake-markdown/issues/56
-related: [[hirake-viewer-features]] [[hirake-external-editor]] [[hirake-uri-scheme]] [[hirake-wikilinks]] [[hirake-overview]]
+related: [[hirake-viewer-features]] [[hirake-external-editor]] [[hirake-link-check]] [[hirake-uri-scheme]] [[hirake-wikilinks]] [[hirake-overview]]
 confidence: high
 updated: 2026-08-18
 ---
 
 **Hirake はファイルを書き換えない。** その方針を保ったまま「読んでいて直したくなる」場面をどう扱うか、という判断をまとめたページ。
 
-> **2026-08-18 更新: #55 は実装済み**（→ [[hirake-external-editor]]）。**未実装なのは #56 だけ**になった。当初このページは「どちらも未実装の方針」として confidence: medium で書いていた。
+> **2026-08-18 更新: #55・#56 とも実装済み**（→ [[hirake-external-editor]] / [[hirake-link-check]]）。当初このページは「どちらも未実装の方針」として confidence: medium で書いていた。
 
 ## 何が問題か
 
@@ -42,13 +42,15 @@ updated: 2026-08-18
 
 **仕組みの詳細は [[hirake-external-editor]] にある。** ここでは方針だけを持ち、実装の記述は置かない（2 か所に書くと乖離するため）。
 
-## 方針 2: 壊れたものは直さず、見せる（#56・未実装）
+## 方針 2: 壊れたものは直さず、見せる（#56・実装済み）
 
 ページの改名・移動でリンクは壊れるが、**リネーム時のリンク自動追従はやらない**。他ファイルへの書き込みが必要で、1 回のリネームで数十ファイルを書き換えることになり、失敗時の一貫性・自動リロードとの競合・文字コード保存の判断がすべて付いてくる。
 
 **検出して場所を示すところまでを Hirake が担い、修正はエディタまたは AI が行う。**
 
-前提として、`LinkGraphService.Build` は現在**解決できなかったリンクをその場で捨てている**。まず捨てるのをやめることが起点になる。[[hirake-wikilinks]] が入ったことで、未解決の `[[...]]` も同じ経路で拾える。
+起点は `LinkGraphService.Build` が**解決できなかったリンクをその場で捨てていた**のをやめること。追加の走査は 1 回も要らなかった。
+
+ただし「[[hirake-wikilinks]] が入れば未解決の `[[...]]` も同じ経路で拾える」という当初の見立ては**誤りだった**（解決できない `[[...]]` は `LinkInline` にならない）。**仕組みの詳細は [[hirake-link-check]] にある。**
 
 ## 方針 3: AI への受け渡し口を使う
 
@@ -58,7 +60,7 @@ updated: 2026-08-18
 2. タブを右クリック →「この位置へのリンクをコピー」
 3. チャットに貼って直させる
 
-`hirake://open?path=...&line=42` にはパスと行番号が両方入っているため、受け取った側はファイルと該当箇所を特定できる。**このメニューは Hirake 同士のリンク用に作られたものだが、外部への受け渡し口としてそのまま使える** → [[hirake-uri-scheme]]。#56 の「一覧を `hirake://` 付きでコピー」は、この経路を一覧に広げる話。
+`hirake://open?path=...&line=42` にはパスと行番号が両方入っているため、受け取った側はファイルと該当箇所を特定できる。**このメニューは Hirake 同士のリンク用に作られたものだが、外部への受け渡し口としてそのまま使える** → [[hirake-uri-scheme]]。#56 の「一覧を `hirake://` 付きでコピー」は、この経路を一覧に広げたもの（→ [[hirake-link-check]]）。
 
 ## 唯一の例外候補（未決）
 

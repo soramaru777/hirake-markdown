@@ -25,6 +25,7 @@ public interface IDocumentTabHost
     void ShortcutCycleTheme();
     void ShortcutToggleGraphView();
     void ShortcutToggleStructureView();
+    void ShortcutToggleLinkCheckView();
     void ShortcutToggleFingerprintView();
     void ShortcutToggleStatsView();
     void ShortcutToggleCanvasView();
@@ -1248,6 +1249,16 @@ public class DocumentTab : IDisposable
     {
     }
 
+    /// <summary>
+    /// クリップボードへの書き込み要求（{type:'copyText', text}）のフック。
+    /// <b>既定は何もしない。</b> Markdown は生の HTML と script を含められるため、
+    /// ここで書き込むと任意の文書がクリップボードを差し替えられることになる。
+    /// 自分で組み立てた内容だけを扱うタブ（LinkCheckTab）がオーバーライドする。
+    /// </summary>
+    protected virtual void OnCopyTextMessage(System.Text.Json.JsonElement message)
+    {
+    }
+
     // ---- キャンバス用サムネイル ---------------------------------------
 
     private bool _thumbnailCaptured;
@@ -1528,6 +1539,13 @@ public class DocumentTab : IDisposable
                 return;
             }
 
+            // クリップボードへの書き込み要求（LinkCheckTab がオーバーライドで処理）。
+            if (type == "copyText")
+            {
+                OnCopyTextMessage(root);
+                return;
+            }
+
             if (type != "shortcut")
             {
                 return;
@@ -1575,6 +1593,9 @@ public class DocumentTab : IDisposable
                     break;
                 case "toggleStructureView":
                     _host.ShortcutToggleStructureView();
+                    break;
+                case "toggleLinkCheckView":
+                    _host.ShortcutToggleLinkCheckView();
                     break;
                 case "toggleFingerprintView":
                     _host.ShortcutToggleFingerprintView();

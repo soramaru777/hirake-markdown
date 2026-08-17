@@ -170,6 +170,20 @@
                             Cursor="Hand"
                             ToolTip="構造クエリ (Ctrl+Shift+S)" />
 
+                    <Button x:Name="LinkCheckButton"
+                            Click="LinkCheckButton_Click"
+                            Content="&#xE71B;"
+                            FontFamily="Segoe MDL2 Assets"
+                            FontSize="14"
+                            Padding="8,4"
+                            Margin="4,2,0,2"
+                            VerticalAlignment="Center"
+                            BorderThickness="0"
+                            Background="Transparent"
+                            Foreground="{DynamicResource ChromeText}"
+                            Cursor="Hand"
+                            ToolTip="リンク切れ・孤立ページ (Ctrl+Shift+L)" />
+
                     <Button x:Name="FingerprintButton"
                             Click="FingerprintButton_Click"
                             Content="&#xE928;"
