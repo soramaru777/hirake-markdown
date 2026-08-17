@@ -96,4 +96,6 @@ Ctrl+E ─┬─ WPF に届く場合      → MainWindow.Window_PreviewKeyDown
 
 ## 非スコープ
 
-Hirake 本体での Markdown 編集、新規ファイル作成、エディタ設定の GUI。タスクのチェックボックス トグル（`- [ ]` ↔ `- [x]`）は「表示専用」を崩す判断になるため、別途決める。
+Hirake 本体での Markdown 編集、新規ファイル作成、エディタ設定の GUI。タスクのチェックボックス トグル（`- [ ]` ↔ `- [x]`）は「表示専用」を崩す判断になるため、別途決める → [[hirake-editing-boundary]]
+
+このページは「どう渡すか」を扱う。**なぜ Hirake 自身が書き換えないのか**という方針は [[hirake-editing-boundary]] にある。
