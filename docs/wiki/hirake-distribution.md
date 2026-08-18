@@ -10,9 +10,10 @@ sources:
   - .github/workflows/release.yml
   - https://github.com/soramaru777/hirake-markdown/issues/66
   - https://github.com/soramaru777/hirake-markdown/issues/70
+  - https://github.com/soramaru777/hirake-markdown/issues/76
 related: [[hirake-build]] [[hirake-file-association]] [[hirake-data-paths]]
 confidence: high
-updated: 2026-08-17
+updated: 2026-08-19
 ---
 
 利用者向けの配布形態は **GitHub Releases に置く単一の `HirakeSetup-x.y.z.exe`**（Inno Setup 製）。
@@ -65,22 +66,43 @@ develop / main への PR では `pr-build.yml` が走り、**インストーラ�
 
 `v*` タグを push すると `release.yml` が走り、インストーラを作って**下書きの** Release に添付する。**公開は手動**。
 
+**タグは手で打たず `scripts/tag-release.ps1` に生成させる**（ISSUE #76）。
+
 ```powershell
-git switch develop
+git switch main
 git pull
-git tag v1.0.0
-git push origin v1.0.0
+.\scripts\tag-release.ps1 -WhatIf   # 何をするかだけ表示する
+.\scripts\tag-release.ps1
 ```
+
+タグ名は `src/Hirake/Hirake.csproj` の `<Version>` から作られる。**手で書き写さない。** 打ち間違えても消せないため、写し間違いの経路自体を無くしてある。
+
+次のいずれかに当てはまると、**タグを作らずに中止**する。
+
+- 版が数値 3〜4 要素でない
+- いま居るコミットがリリース対象ブランチ（既定 `main`）の先端でない
+- 同名タグがローカルまたはリモートに既にある ＝ **版の上げ忘れ**
+
+> **タグ名を csproj から生成すると、`verify-tag` の「タグ名と版が一致すること」は必ず成功するようになる。**
+> 上げ忘れは不一致ではなく**重複**として現れるので、重複の検出がその柵を引き継ぐ。
 
 守る決まりは 3 つ。
 
-1. **タグは `main` または `develop` に含まれるコミットへ打つ。** 未マージの feature へ打つと CI が落ちる（#52）。落ちたらタグの位置が誤っている
+1. **タグは main のマージコミットへ打つ。** `scripts/tag-release.ps1` が既定で強制する。未マージの feature へ打った場合は CI も落ちる（#52）
    > PR でも同じビルドが走るようになったため（#70）、ここで初めて失敗する範囲は狭い。
    > この検証は、2026-08-16 まで**正しいタグでも必ず失敗していた**（#66）。GitHub Actions の `shell: bash` が
    > `-e` 付きで起動するため、「含まれない」を表す終了コード 1 でシェルごと落ちていた。原因と対処は
    > `~/wiki/knowledge/github-actions-shell-bash-errexit.md`
 2. **`v*` タグは打ち直せない・消せない。** ルールセット `protect-release-tags` が update と deletion を拒否する（#57）。**打ち間違えたら、そのタグは残したまま次のパッチ版へ進む**
 3. **公開は下書きを確認してから。** `publish-release` が作るのは下書きまで
+
+### 打つ先は main のマージコミット
+
+**develop の先端には打たない。** Releases に載る成果物と main の内容を一致させるため。実際の `v1.0.0` も `a36761a`（develop からのマージ）に打たれている。
+
+> **CI はここまで縛っていない。** `verify-tag` が見るのは「main **または** develop に含まれること」＝**未マージのコミットでないこと**（#52）だけで、develop の先端に打っても通ってしまう。
+>
+> つまり**運用ルールの方が CI より厳しい**。守っているのは `scripts/tag-release.ps1` の既定（`-Branch main`）とこの手順書であって、CI ではない。`-Branch develop` は残してあるが、通常の運用では使わない。
 
 ### これは権限の分離ではない
 

@@ -96,3 +96,23 @@
   - `hirake-editing-boundary.md` の「#56 は未実装」を実装済みへ改めた（方針は境界ページ、仕組みは新ページ）
   - `hirake-knowledge-exploration.md` / `hirake-shortcuts.md` / `hirake-viewer-features.md` に
     Ctrl+Shift+L と仮想タブ「リンク検出」を追加
+
+2026-08-18 update — ISSUE #76（リリースタグを csproj の <Version> から生成する）にあわせて更新。
+  - `hirake-distribution.md` の「タグを打つ」を、手打ちから `scripts/tag-release.ps1` に差し替えた
+  - **記述と実態の食い違いを 1 件直した。** これまで手順は `git switch develop` と書いていたが、
+    実際の `v1.0.0` は main のマージコミット `a36761a` に打たれている。`verify-tag` は
+    「main **または** develop に含まれること」しか見ないため、どちらでも CI は通り、
+    食い違いに気づけない状態だった。Releases と main を一致させる方を正とした
+  - **柵の引き継ぎを明記した**: タグ名を csproj から生成すると、`verify-tag` の
+    「タグ名と版が一致すること」は必ず成功するようになる。版の上げ忘れは不一致ではなく
+    **重複**として現れるため、スクリプト側の重複検出がその役目を引き継ぐ
+
+2026-08-19 update — タグを打つ先を **main に一本化**する決定を反映。
+  - `hirake-distribution.md` の「守る決まり」1 を「main **または** develop」から
+    「**main のマージコミットへ打つ**」に改め、「打つ先は main のマージコミット」の節を新設した
+  - **CI との差を明記した。** `verify-tag` が見るのは「main か develop に含まれること」＝
+    未マージでないこと（#52）だけで、develop の先端に打っても通る。
+    **運用ルールの方が CI より厳しい**状態なので、守っているのは
+    `scripts/tag-release.ps1` の既定（`-Branch main`）と手順書であって CI ではない、と書いた
+  - あわせて `installer/README.md`（wiki 外）の「main か develop に打ってください」も直した。
+    命令形で書かれており、放置すると手順書どうしが矛盾するため
