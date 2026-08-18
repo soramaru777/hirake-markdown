@@ -13,7 +13,7 @@ sources:
   - https://github.com/soramaru777/hirake-markdown/issues/76
 related: [[hirake-build]] [[hirake-file-association]] [[hirake-data-paths]]
 confidence: high
-updated: 2026-08-18
+updated: 2026-08-19
 ---
 
 利用者向けの配布形態は **GitHub Releases に置く単一の `HirakeSetup-x.y.z.exe`**（Inno Setup 製）。
@@ -86,17 +86,23 @@ git pull
 > **タグ名を csproj から生成すると、`verify-tag` の「タグ名と版が一致すること」は必ず成功するようになる。**
 > 上げ忘れは不一致ではなく**重複**として現れるので、重複の検出がその柵を引き継ぐ。
 
-打つ先は **main のマージコミット**。実際の `v1.0.0` は `a36761a`（develop からのマージ）に付いている。`verify-tag` は「main **または** develop に含まれること」しか見ないため develop でも通るが、Releases と main を一致させるために main を既定にしている（`-Branch develop` で変更可）。
-
 守る決まりは 3 つ。
 
-1. **タグは `main` または `develop` に含まれるコミットへ打つ。** 未マージの feature へ打つと CI が落ちる（#52）。落ちたらタグの位置が誤っている
+1. **タグは main のマージコミットへ打つ。** `scripts/tag-release.ps1` が既定で強制する。未マージの feature へ打った場合は CI も落ちる（#52）
    > PR でも同じビルドが走るようになったため（#70）、ここで初めて失敗する範囲は狭い。
    > この検証は、2026-08-16 まで**正しいタグでも必ず失敗していた**（#66）。GitHub Actions の `shell: bash` が
    > `-e` 付きで起動するため、「含まれない」を表す終了コード 1 でシェルごと落ちていた。原因と対処は
    > `~/wiki/knowledge/github-actions-shell-bash-errexit.md`
 2. **`v*` タグは打ち直せない・消せない。** ルールセット `protect-release-tags` が update と deletion を拒否する（#57）。**打ち間違えたら、そのタグは残したまま次のパッチ版へ進む**
 3. **公開は下書きを確認してから。** `publish-release` が作るのは下書きまで
+
+### 打つ先は main のマージコミット
+
+**develop の先端には打たない。** Releases に載る成果物と main の内容を一致させるため。実際の `v1.0.0` も `a36761a`（develop からのマージ）に打たれている。
+
+> **CI はここまで縛っていない。** `verify-tag` が見るのは「main **または** develop に含まれること」＝**未マージのコミットでないこと**（#52）だけで、develop の先端に打っても通ってしまう。
+>
+> つまり**運用ルールの方が CI より厳しい**。守っているのは `scripts/tag-release.ps1` の既定（`-Branch main`）とこの手順書であって、CI ではない。`-Branch develop` は残してあるが、通常の運用では使わない。
 
 ### これは権限の分離ではない
 
