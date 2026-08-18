@@ -2,6 +2,7 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using Markdig;
+using Markdig.Renderers.Html;
 using Markdig.Syntax;
 using Markdig.Syntax.Inlines;
 
@@ -15,6 +16,23 @@ public sealed record HirakeOpenRequest(string Path, int? Line, string? Heading) 
 
 /// <summary>hirake://workspace の解析結果（検証済み）。</summary>
 public sealed record HirakeWorkspaceRequest(string Name) : HirakeRequest;
+
+/// <summary>見出しの探し方（ISSUE #53）。</summary>
+public enum HeadingMatchMode
+{
+    /// <summary>
+    /// 見出しテキストを優先し、見つからなければ id で探す。
+    /// <c>hirake://open?heading=</c> はこちら（契約が「見出しテキスト」のため）。
+    /// </summary>
+    TextFirst,
+
+    /// <summary>
+    /// id を優先し、見つからなければ見出しテキストで探す。
+    /// 文書内リンクの <c>[表示](other.md#target)</c> はこちら
+    /// （URL のフラグメントは本来 id を指すため）。
+    /// </summary>
+    IdFirst,
+}
 
 /// <summary>
 /// hirake:// URL スキームの解析と検証。
@@ -437,8 +455,14 @@ public static class HirakeUri
     /// 見出し id（AutoIdentifiers）ではなく見出しテキストで指定するのは、日本語の
     /// 見出しでは id が section / section-1 のような非可読な採番になり、URL として
     /// 書けず、見出しの追加・並べ替えで簡単にずれるため。
+    ///
+    /// ただし**見出しテキストで見つからなかったときは id でも照合する**（ISSUE #53）。
+    /// 文書内リンクの `[表示](other.md#my-heading)` は GitHub 流の id を書く記法が
+    /// 一般的で、テキスト照合だけでは 1 件も当たらないため。優先はテキスト側のままで、
+    /// hirake:// の契約（見出しテキストで指定する）は変えない。
     /// </summary>
-    public static int? FindHeadingLine(string filePath, string headingText)
+    public static int? FindHeadingLine(
+        string filePath, string headingText, HeadingMatchMode mode = HeadingMatchMode.TextFirst)
     {
         if (string.IsNullOrWhiteSpace(headingText))
         {
@@ -471,25 +495,57 @@ public static class HirakeUri
 
         try
         {
-            MarkdownDocument document = Markdown.Parse(text, MarkdownRenderer.Pipeline);
+            // 解析コンテキストを渡すのは、見出しに [[wikilink]] が含まれる場合に
+            // 描画側と同じ表示テキストへ揃えるため（ISSUE #53）。
+            // textOnly にして**ファイルは探させない**。ここはリンクのクリック処理から
+            // 同期で呼ばれるので、索引の構築（フォルダ走査）を持ち込むと画面が止まる。
+            MarkdownDocument document = Markdown.Parse(
+                text,
+                MarkdownRenderer.Pipeline,
+                MarkdownRenderer.CreateParserContext(filePath, root: null, textOnly: true));
             string target = NormalizeSpaces(headingText);
+            int? textMatch = null;
+            int? idMatch = null;
 
+            // 両方を集めてから優先順位で選ぶ。先に当たった方を即返すと、
+            // 「id 優先」を指定しても文書内の順番しだいでテキスト側が勝ってしまう。
             foreach (HeadingBlock heading in document.Descendants<HeadingBlock>())
             {
-                string title = NormalizeSpaces(GetInlineText(heading.Inline));
-                if (string.Equals(title, target, StringComparison.OrdinalIgnoreCase))
+                // Markdig の Line は 0 始まり。ファイル行に合わせて 1 始まりで扱う。
+                if (textMatch == null)
                 {
-                    // Markdig の Line は 0 始まり。ファイル行に合わせて 1 始まりで返す。
-                    return heading.Line + 1;
+                    string title = NormalizeSpaces(GetInlineText(heading.Inline));
+                    if (string.Equals(title, target, StringComparison.OrdinalIgnoreCase))
+                    {
+                        textMatch = heading.Line + 1;
+                    }
+                }
+
+                if (idMatch == null)
+                {
+                    string? id = heading.TryGetAttributes()?.Id;
+                    if (id != null && string.Equals(id, target, StringComparison.OrdinalIgnoreCase))
+                    {
+                        idMatch = heading.Line + 1;
+                    }
+                }
+
+                if (textMatch != null && idMatch != null)
+                {
+                    break;
                 }
             }
+
+            if (mode == HeadingMatchMode.IdFirst)
+            {
+                return idMatch ?? textMatch;
+            }
+            return textMatch ?? idMatch;
         }
         catch
         {
             return null;
         }
-
-        return null;
     }
 
     /// <summary>

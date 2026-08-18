@@ -9,12 +9,16 @@ sources:
   - https://github.com/soramaru777/hirake-markdown/issues/57
   - .github/workflows/release.yml
   - https://github.com/soramaru777/hirake-markdown/issues/66
+  - https://github.com/soramaru777/hirake-markdown/issues/70
+  - https://github.com/soramaru777/hirake-markdown/issues/76
 related: [[hirake-build]] [[hirake-file-association]] [[hirake-data-paths]]
 confidence: high
-updated: 2026-08-16
+updated: 2026-08-19
 ---
 
 利用者向けの配布形態は **GitHub Releases に置く単一の `HirakeSetup-x.y.z.exe`**（Inno Setup 製）。
+
+**2026-08-16 に v1.0.0 を公開した**（初回リリース）。#40 で作った経路が実際に通ったのはこれが最初。
 
 ## インストール
 
@@ -44,23 +48,61 @@ updated: 2026-08-16
 
 ## リリースの手順と決まりごと
 
+### PR の段階で分かること
+
+develop / main への PR では `pr-build.yml` が走り、**インストーラができるところまで**確かめる（ISSUE #70）。所要は約 2 分半。
+
+- 関連付けスクリプトのテスト / 配布スクリプトの 5.1 検査
+- 自己完結発行と成果物の検証
+- **Inno Setup の取得（固定 URL + SHA-256 照合）とコンパイル**
+
+定義は `build.yml`（`workflow_call`）1 本で、リリースと PR が同じものを呼ぶ。コピーすると乖離して
+「PR は通るがリリースで落ちる」状態になるため。
+
+> **取得元が差し替えられたことに、タグを打つ前に気づける**のが要点。Inno Setup の SHA-256 照合は
+> 初回のリリースが成功しても消えないリスクで、PR で回していれば事前に分かる。
+
+### タグを打つ
+
 `v*` タグを push すると `release.yml` が走り、インストーラを作って**下書きの** Release に添付する。**公開は手動**。
 
+**タグは手で打たず `scripts/tag-release.ps1` に生成させる**（ISSUE #76）。
+
 ```powershell
-git switch develop
+git switch main
 git pull
-git tag v1.0.0
-git push origin v1.0.0
+.\scripts\tag-release.ps1 -WhatIf   # 何をするかだけ表示する
+.\scripts\tag-release.ps1
 ```
+
+タグ名は `src/Hirake/Hirake.csproj` の `<Version>` から作られる。**手で書き写さない。** 打ち間違えても消せないため、写し間違いの経路自体を無くしてある。
+
+次のいずれかに当てはまると、**タグを作らずに中止**する。
+
+- 版が数値 3〜4 要素でない
+- いま居るコミットがリリース対象ブランチ（既定 `main`）の先端でない
+- 同名タグがローカルまたはリモートに既にある ＝ **版の上げ忘れ**
+
+> **タグ名を csproj から生成すると、`verify-tag` の「タグ名と版が一致すること」は必ず成功するようになる。**
+> 上げ忘れは不一致ではなく**重複**として現れるので、重複の検出がその柵を引き継ぐ。
 
 守る決まりは 3 つ。
 
-1. **タグは `main` または `develop` に含まれるコミットへ打つ。** 未マージの feature へ打つと CI が落ちる（#52）。落ちたらタグの位置が誤っている
+1. **タグは main のマージコミットへ打つ。** `scripts/tag-release.ps1` が既定で強制する。未マージの feature へ打った場合は CI も落ちる（#52）
+   > PR でも同じビルドが走るようになったため（#70）、ここで初めて失敗する範囲は狭い。
    > この検証は、2026-08-16 まで**正しいタグでも必ず失敗していた**（#66）。GitHub Actions の `shell: bash` が
    > `-e` 付きで起動するため、「含まれない」を表す終了コード 1 でシェルごと落ちていた。原因と対処は
    > `~/wiki/knowledge/github-actions-shell-bash-errexit.md`
 2. **`v*` タグは打ち直せない・消せない。** ルールセット `protect-release-tags` が update と deletion を拒否する（#57）。**打ち間違えたら、そのタグは残したまま次のパッチ版へ進む**
 3. **公開は下書きを確認してから。** `publish-release` が作るのは下書きまで
+
+### 打つ先は main のマージコミット
+
+**develop の先端には打たない。** Releases に載る成果物と main の内容を一致させるため。実際の `v1.0.0` も `a36761a`（develop からのマージ）に打たれている。
+
+> **CI はここまで縛っていない。** `verify-tag` が見るのは「main **または** develop に含まれること」＝**未マージのコミットでないこと**（#52）だけで、develop の先端に打っても通ってしまう。
+>
+> つまり**運用ルールの方が CI より厳しい**。守っているのは `scripts/tag-release.ps1` の既定（`-Branch main`）とこの手順書であって、CI ではない。`-Branch develop` は残してあるが、通常の運用では使わない。
 
 ### これは権限の分離ではない
 
@@ -74,6 +116,37 @@ git push origin v1.0.0
 「権限で塞いだ」と記録すると実態より強い保証だと誤解されるため、この区別を残しておく。
 
 > `v*` 以外のタグ（作業用の目印など）は対象外で、従来どおり自由に作成・削除できる。
+
+### ルールセットが効いているか確かめる
+
+2026-08-16 に `v0.0.0-ruleset-test` で実施し、5 項目すべて期待どおりだった。設定を変えたときは同じ手順で確かめる。
+
+| 操作 | 期待 |
+|---|---|
+| `v*` テストタグの push | 成功（`creation` は制限していない） |
+| `git push --force` | 拒否 `Cannot update this protected ref.` |
+| `git push --delete` | 拒否 `Cannot delete this tag` |
+| `v*` 以外のタグの作成・削除 | どちらも成功 |
+| Actions | **失敗する**（下記） |
+
+**設定内容だけなら push せずに読める。** 実地の拒否確認が要らないときはこれで足りる。
+
+```powershell
+gh api repos/soramaru777/hirake-markdown/rulesets/20899125 `
+  --jq '{enforcement, bypass: (.bypass_actors|length), rules: [.rules[].type]}'
+```
+
+#### 後始末に一手間かかる
+
+**テストタグも「消せない」の対象**なので、`Enforcement status` を一時的に `Disabled` にしてから削除し、`Active` に戻す（ルールセット自体は削除しないこと）。
+
+**戻し忘れが最大の事故ポイント。** 上の `gh api` で `enforcement` が `active` に戻っていることを必ず確認する。
+
+#### 下書き Release はできない
+
+テストタグの版（`0.0.0-ruleset-test`）は `csproj` の `<Version>` と一致せず、数値 3〜4 要素の形式チェックにも通らないため、`build` ジョブが落ちて `publish-release` まで到達しない。**後始末の対象が 1 つ減るので、むしろ好都合。**
+
+> 2026-08-16 の実施時は、落ちた場所が版チェックではなく**ブランチ検証**だった。これが #66（`-e` でシェルごと終了）の発覚経路。#66 修正後は版チェックで落ちる。
 
 ## アンインストールしても残るもの
 

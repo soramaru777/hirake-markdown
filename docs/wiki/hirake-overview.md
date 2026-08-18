@@ -6,9 +6,10 @@ scope: shared
 sources:
   - README.md
   - https://github.com/soramaru777/hirake-markdown/issues/54
-related: [[hirake-viewer-features]] [[hirake-knowledge-exploration]] [[hirake-distribution]] [[hirake-directory-links]]
+  - https://github.com/soramaru777/hirake-markdown/issues/55
+related: [[hirake-viewer-features]] [[hirake-knowledge-exploration]] [[hirake-distribution]] [[hirake-directory-links]] [[hirake-editing-boundary]]
 confidence: high
-updated: 2026-08-16
+updated: 2026-08-17
 ---
 
 Hirake は Windows 用の **表示専用** Markdown ビューア（WPF + WebView2）。このプロジェクト wiki の入口。
@@ -24,6 +25,7 @@ Hirake は Windows 用の **表示専用** Markdown ビューア（WPF + WebView
 | 主題 | ページ |
 |---|---|
 | ビューアとしての機能 | [[hirake-viewer-features]] |
+| 編集の境界（書き換えない方針と、その代わりの経路） | [[hirake-editing-boundary]] |
 | 知識ベース探索（意味検索・OCR・グラフ・構造クエリ・指紋） | [[hirake-knowledge-exploration]] |
 | 無限キャンバス・モード | [[hirake-canvas]] |
 | シンボリックリンクで束ねたフォルダの走査 | [[hirake-directory-links]] |
@@ -46,11 +48,12 @@ Hirake は Windows 用の **表示専用** Markdown ビューア（WPF + WebView
 
 ## 設計の芯
 
-README 全体から読み取れる一貫した方針が 3 つと、実装を進める中で加わった方針が 1 つある。ここが他の判断の前提になる。
+README 全体から読み取れる一貫した方針が 3 つと、実装を進める中で加わった方針が 2 つある。ここが他の判断の前提になる。
 
 1. **管理者権限を要求しない。** インストール先も関連付けもユーザー単位（`%LocalAppData%` / HKCU）に閉じる → [[hirake-distribution]] [[hirake-file-association]]
 2. **他アプリの設定を壊さない。** 既定プログラムが他アプリなら上書きしない、他アプリの `OpenWithProgIds` は削除しない → [[hirake-file-association]]
 3. **外部からの入力は fail-closed。** `hirake://` は検証に落ちたら黙って無視し、「Markdown をタブで開く」以外は一切しない → [[hirake-uri-scheme]]
 4. **走査はネットワークへ出ない。** シンボリックリンクが `\\server\share` を指していても辿らず、設定で有効にした場合もローカルに限る → [[hirake-directory-links]]
+5. **ファイルを書き換えない。** 編集は外部エディタか AI に委ね、Hirake は「そこへ渡す」「壊れた箇所を見せる」までを担う → [[hirake-editing-boundary]]
 
-> このページは当初 `README.md` のみから作成した。設計の芯の 4 番目だけは ISSUE #54 由来で、README には書かれていない（2026-08-16 更新）。実装（`src/Hirake/`）に踏み込んだ記述は [[hirake-architecture]] に分ける。
+> このページは当初 `README.md` のみから作成した。設計の芯の 4 番目は ISSUE #54 由来、5 番目は #55 / #56 由来で、どちらも README には書かれていない（2026-08-17 更新）。実装（`src/Hirake/`）に踏み込んだ記述は [[hirake-architecture]] に分ける。

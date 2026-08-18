@@ -29,6 +29,20 @@ public sealed class SettingsData
     public bool FollowDirectoryLinks { get; set; }
 
     /// <summary>
+    /// <c>[[wikilink]]</c> 記法をリンクとして扱うか。既定は true（ISSUE #53）。
+    /// 通常の Markdown で <c>[[</c> を書く文書のためにオフにできる。
+    /// </summary>
+    public bool WikiLinksEnabled { get; set; } = true;
+
+    /// <summary>
+    /// 「エディタで開く」に使う外部エディタ（ISSUE #55）。null は未設定で、
+    /// 初回に使われたときに検出フローへ入る。設定 UI は持たず、選び直したいときは
+    /// この項目を消して再度「エディタで開く」を使う。
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public EditorSettings? Editor { get; set; }
+
+    /// <summary>
     /// 前回セッションのウィンドウ構成（1 要素 = ウィンドウ 1 枚）。
     /// ワークスペースと同じ記述子を使い、復元経路を 1 本にまとめている。
     /// </summary>
@@ -126,6 +140,34 @@ public sealed class SettingsStore
         set
         {
             lock (_lock) { _data.FollowDirectoryLinks = value; }
+            ScheduleSave();
+        }
+    }
+
+    /// <summary>
+    /// <c>[[wikilink]]</c> をリンクとして扱うか（ISSUE #53）。
+    /// 設定 UI は無く、settings.json を直接編集して切り替える。
+    /// 変更はタブの再読み込みで反映される。
+    /// </summary>
+    public bool WikiLinksEnabled
+    {
+        get { lock (_lock) { return _data.WikiLinksEnabled; } }
+        set
+        {
+            lock (_lock) { _data.WikiLinksEnabled = value; }
+            ScheduleSave();
+        }
+    }
+
+    /// <summary>
+    /// 「エディタで開く」に使う外部エディタ（ISSUE #55）。null は未設定。
+    /// </summary>
+    public EditorSettings? Editor
+    {
+        get { lock (_lock) { return _data.Editor; } }
+        set
+        {
+            lock (_lock) { _data.Editor = value; }
             ScheduleSave();
         }
     }

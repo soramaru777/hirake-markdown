@@ -43,7 +43,8 @@ public static class FolderSearchService
     internal const long MaxFileBytes = 2L * 1024 * 1024; // 2MB 超はスキップ
     private const int MaxHitsPerFilePreview = 3;        // ファイルごとのプレビュー行数
     private const int PreviewMaxLength = 100;           // プレビュー 1 行の最大文字数
-    private const int MaxDirectoryDepth = 32;
+    /// <summary>再帰の深さ上限。表示にも使うため公開する（値を 2 か所に持たない）。</summary>
+    internal const int MaxDirectoryDepth = 32;
 
     // 1 検索あたりの OCR 実行時間バジェット（未キャッシュ画像の OCR に使える合計時間）。
     // キャッシュ済みテキストの照合には影響しない。超過分は今回スキップし
@@ -131,14 +132,33 @@ public static class FolderSearchService
         public void Add(long elapsedMillis) => _spentMillis += elapsedMillis;
     }
 
+    /// <summary>
+    /// 走査の途中で黙って飛ばしたものの記録（ISSUE #56）。
+    /// 列挙は読めないフォルダを <c>continue</c> で飛ばすため、呼び出し側からは
+    /// 「そこには何も無かった」と区別できない。0 件表示の根拠にしないよう数える。
+    /// </summary>
+    internal sealed class EnumerationStats
+    {
+        /// <summary>読めない・辿れないために中を見ていないフォルダの数。</summary>
+        public int SkippedDirectories { get; set; }
+    }
+
     /// <summary>隠しフォルダ・node_modules・.git をスキップしつつ Markdown を再帰列挙する。</summary>
-    internal static IEnumerable<string> EnumerateMarkdownFiles(string root, CancellationToken token)
+    /// <param name="stats">
+    /// 省略可。渡すと、読めずに飛ばしたフォルダ数を記録する（設計上の除外は数えない）。
+    /// </param>
+    internal static IEnumerable<string> EnumerateMarkdownFiles(
+        string root, CancellationToken token, EnumerationStats? stats = null)
     {
         // 起点そのものも検査する。子フォルダだけを検査していると、root が
         // ジャンクション／シンボリックリンクだった場合に一度も検査を通らず、
         // リンク先（UNC 共有など）をそのまま走査してしまう。
         if (!FileTreeItem.IsSafeTraversalRoot(root))
         {
+            if (stats != null)
+            {
+                stats.SkippedDirectories++;
+            }
             yield break;
         }
 
@@ -158,6 +178,10 @@ public static class FolderSearchService
         string? realRoot = FileTreeItem.ResolveRealPath(root, isDirectory: true);
         if (realRoot == null)
         {
+            if (stats != null)
+            {
+                stats.SkippedDirectories++;
+            }
             yield break;
         }
 
@@ -176,6 +200,11 @@ public static class FolderSearchService
             }
             catch
             {
+                // 読めないフォルダ。中身は 1 件も見ていない。
+                if (stats != null)
+                {
+                    stats.SkippedDirectories++;
+                }
                 continue;
             }
 
@@ -208,6 +237,10 @@ public static class FolderSearchService
             }
             catch
             {
+                if (stats != null)
+                {
+                    stats.SkippedDirectories++;
+                }
                 continue;
             }
 
@@ -221,6 +254,10 @@ public static class FolderSearchService
                 string? realSub = FileTreeItem.ResolveRealPath(sub, isDirectory: true);
                 if (realSub == null)
                 {
+                    if (stats != null)
+                    {
+                        stats.SkippedDirectories++;
+                    }
                     continue;
                 }
 

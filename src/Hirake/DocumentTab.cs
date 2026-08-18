@@ -25,11 +25,13 @@ public interface IDocumentTabHost
     void ShortcutCycleTheme();
     void ShortcutToggleGraphView();
     void ShortcutToggleStructureView();
+    void ShortcutToggleLinkCheckView();
     void ShortcutToggleFingerprintView();
     void ShortcutToggleStatsView();
     void ShortcutToggleCanvasView();
     void ShortcutToggleWorkspaceMenu();
     void ShortcutNewWindow();
+    void ShortcutOpenInEditor();
     void OnTabZoomChanged(DocumentTab source, double zoomFactor);
 }
 
@@ -321,18 +323,28 @@ public class DocumentTab : IDisposable
         return tcs.Task;
     }
 
-    protected virtual Task LoadContentAsync()
+    protected virtual async Task LoadContentAsync()
     {
         if (_disposed)
         {
-            return Task.CompletedTask;
+            return;
         }
 
         if (!File.Exists(FilePath))
         {
             WebView.CoreWebView2.NavigateToString(
                 MarkdownRenderer.RenderMessage($"ファイルが見つかりません: {FilePath}"));
-            return Task.CompletedTask;
+            return;
+        }
+
+        // [[wikilink]] の名前解決に使う索引を、描画の前にバックグラウンドで用意する
+        // （ISSUE #53）。Render は UI スレッドで同期に走るため、ここで温めておかないと
+        // フォルダの走査ぶんだけ画面が止まる。文書に "[[" が無ければ何もしない。
+        await WikiLinkIndex.PrewarmAsync(FilePath).ConfigureAwait(true);
+
+        if (_disposed)
+        {
+            return;
         }
 
         string html;
@@ -345,11 +357,10 @@ public class DocumentTab : IDisposable
         {
             WebView.CoreWebView2.NavigateToString(
                 MarkdownRenderer.RenderMessage($"読み込みに失敗しました: {ex.Message}"));
-            return Task.CompletedTask;
+            return;
         }
 
         NavigateHtml(html);
-        return Task.CompletedTask;
     }
 
     /// <summary>設定から実効テーマを再取得し、既定背景色へ反映して返す。</summary>
@@ -957,8 +968,7 @@ public class DocumentTab : IDisposable
                 if (IsMarkdownPath(uri.AbsolutePath))
                 {
                     e.Cancel = true;
-                    string realPath = ConvertDocUriToPath(uri);
-                    OpenInNewTab(realPath);
+                    OpenInNewTabResolvingHeading(ConvertDocUriToPath(uri), uri.Fragment);
                 }
                 return;
             }
@@ -1239,6 +1249,16 @@ public class DocumentTab : IDisposable
     {
     }
 
+    /// <summary>
+    /// クリップボードへの書き込み要求（{type:'copyText', text}）のフック。
+    /// <b>既定は何もしない。</b> Markdown は生の HTML と script を含められるため、
+    /// ここで書き込むと任意の文書がクリップボードを差し替えられることになる。
+    /// 自分で組み立てた内容だけを扱うタブ（LinkCheckTab）がオーバーライドする。
+    /// </summary>
+    protected virtual void OnCopyTextMessage(System.Text.Json.JsonElement message)
+    {
+    }
+
     // ---- キャンバス用サムネイル ---------------------------------------
 
     private bool _thumbnailCaptured;
@@ -1443,7 +1463,7 @@ public class DocumentTab : IDisposable
             if (IsDocHost(uri.Host)
                 && IsMarkdownPath(uri.AbsolutePath))
             {
-                OpenInNewTab(ConvertDocUriToPath(uri));
+                OpenInNewTabResolvingHeading(ConvertDocUriToPath(uri), uri.Fragment);
                 return;
             }
 
@@ -1519,6 +1539,13 @@ public class DocumentTab : IDisposable
                 return;
             }
 
+            // クリップボードへの書き込み要求（LinkCheckTab がオーバーライドで処理）。
+            if (type == "copyText")
+            {
+                OnCopyTextMessage(root);
+                return;
+            }
+
             if (type != "shortcut")
             {
                 return;
@@ -1543,6 +1570,9 @@ public class DocumentTab : IDisposable
                 case "openFile":
                     _host.ShortcutOpenFile();
                     break;
+                case "openInEditor":
+                    _host.ShortcutOpenInEditor();
+                    break;
                 case "quickPaste":
                     _host.ShortcutQuickPaste();
                     break;
@@ -1563,6 +1593,9 @@ public class DocumentTab : IDisposable
                     break;
                 case "toggleStructureView":
                     _host.ShortcutToggleStructureView();
+                    break;
+                case "toggleLinkCheckView":
+                    _host.ShortcutToggleLinkCheckView();
                     break;
                 case "toggleFingerprintView":
                     _host.ShortcutToggleFingerprintView();
@@ -1599,6 +1632,78 @@ public class DocumentTab : IDisposable
     private static bool IsDocHost(string host) =>
         host.Equals(MarkdownRenderer.DocHost, StringComparison.OrdinalIgnoreCase)
         || host.EndsWith("." + MarkdownRenderer.DocHost, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// md リンクの URL フラグメント（#見出し）を、開いた先でジャンプする行番号へ変換する。
+    /// 見つからない場合は null（＝先頭で開く）。落とさないことを優先する。
+    ///
+    /// これは wikilink 専用ではない。通常の <c>[表示](other.md#見出し)</c> も同じ経路を通る
+    /// （ISSUE #53 まではフラグメントを見ておらず、スクロールしなかった）。
+    /// </summary>
+    /// <summary>URL フラグメントを見出し文字列へ復号する。対象外なら null。</summary>
+    private static string? DecodeFragment(string fragment)
+    {
+        if (string.IsNullOrEmpty(fragment) || fragment.Length <= 1)
+        {
+            return null;
+        }
+
+        string heading;
+        try
+        {
+            heading = Uri.UnescapeDataString(fragment[1..]);
+        }
+        catch (UriFormatException)
+        {
+            return null;
+        }
+
+        return string.IsNullOrWhiteSpace(heading) ? null : heading;
+    }
+
+    /// <summary>
+    /// md リンクを新しいタブで開く。<c>#見出し</c> が付いていれば、その行を
+    /// **バックグラウンドで**求めてから開く。
+    ///
+    /// 見出しの解決は対象ファイルの読み込みと解析を伴う。ここはリンクのクリック
+    /// （ナビゲーションイベント）から呼ばれるので、UI スレッドで同期に行うと
+    /// 大きなファイルでクリックのたびに画面が止まる。
+    /// </summary>
+    private void OpenInNewTabResolvingHeading(string path, string fragment)
+    {
+        string? heading = DecodeFragment(fragment);
+        if (heading == null)
+        {
+            // 見出し指定なし。従来どおり即座に開く（余計な待ちを作らない）。
+            OpenInNewTab(path);
+            return;
+        }
+
+        _ = ResolveThenOpenAsync(path, heading);
+    }
+
+    private async Task ResolveThenOpenAsync(string path, string heading)
+    {
+        int? line = null;
+        try
+        {
+            // URL のフラグメントは本来 id を指すので id 優先。当たらなければ見出しテキスト
+            // （wikilink の [[a#見出し]] はこちらで当たる）。
+            line = await Task.Run(
+                () => HirakeUri.FindHeadingLine(path, heading, HeadingMatchMode.IdFirst))
+                .ConfigureAwait(true);
+        }
+        catch
+        {
+            // 見出しが求まらなくても開く（先頭で開く）。
+        }
+
+        if (_disposed)
+        {
+            return;
+        }
+        OpenInNewTab(path, line);
+    }
 
     private static bool IsMarkdownPath(string absolutePath)
     {

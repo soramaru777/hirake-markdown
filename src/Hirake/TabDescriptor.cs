@@ -12,17 +12,18 @@ public static class TabKinds
     public const string Structure = "structure";
     public const string Fingerprint = "fingerprint";
     public const string Stats = "stats";
+    public const string LinkCheck = "linkcheck";
 
     /// <summary>既知の種別かどうか。</summary>
     public static bool IsKnown(string? kind) =>
-        kind is Document or Canvas or Structure or Fingerprint or Stats;
+        kind is Document or Canvas or Structure or Fingerprint or Stats or LinkCheck;
 
     /// <summary>
     /// その種別の <see cref="TabDescriptor.Path"/> がフォルダを指すか（= 仮想タブか）。
     /// document 以外はすべてフォルダを起点に開くタブ。
     /// </summary>
     public static bool IsFolderScoped(string? kind) =>
-        kind is Canvas or Structure or Fingerprint or Stats;
+        kind is Canvas or Structure or Fingerprint or Stats or LinkCheck;
 }
 
 /// <summary>ビューポート（<see cref="CanvasViewState"/>）の検証。</summary>
@@ -89,6 +90,12 @@ public sealed class TabDescriptor
                 {
                     Kind = TabKinds.Stats,
                     Path = NormalizePath(stats.RootFolder, TabKinds.Stats),
+                };
+            case LinkCheckTab linkCheck:
+                return new TabDescriptor
+                {
+                    Kind = TabKinds.LinkCheck,
+                    Path = NormalizePath(linkCheck.RootFolder, TabKinds.LinkCheck),
                 };
         }
 

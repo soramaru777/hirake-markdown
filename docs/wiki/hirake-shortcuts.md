@@ -5,9 +5,9 @@ project: hirake
 scope: shared
 sources:
   - README.md
-related: [[hirake-viewer-features]] [[hirake-knowledge-exploration]] [[hirake-canvas]]
+related: [[hirake-external-editor]] [[hirake-viewer-features]] [[hirake-knowledge-exploration]] [[hirake-canvas]]
 confidence: high
-updated: 2026-08-14
+updated: 2026-08-18
 ---
 
 README の一覧をそのまま保持したもの。機能の説明は各ページを参照。
@@ -15,6 +15,7 @@ README の一覧をそのまま保持したもの。機能の説明は各ペー�
 | キー | 動作 | 詳細 |
 | --- | --- | --- |
 | Ctrl+O | Markdown ファイルを開く | |
+| Ctrl+E | いま読んでいる行を外部エディタで開く | [[hirake-external-editor]] |
 | Ctrl+N | 新しいウィンドウを開く | [[hirake-multi-window]] |
 | Ctrl+Shift+W | ワークスペース一覧の開閉 | [[hirake-workspaces]] |
 | Ctrl+W | 現在のタブを閉じる | |
@@ -29,6 +30,7 @@ README の一覧をそのまま保持したもの。機能の説明は各ペー�
 | Ctrl+Shift+F | フォルダ内横断検索 | [[hirake-knowledge-exploration]] |
 | Ctrl+G | ナレッジグラフ（キャンバスの全体俯瞰）を開く | [[hirake-canvas]] |
 | Ctrl+Shift+S | 構造クエリビューを開く | [[hirake-knowledge-exploration]] |
+| Ctrl+Shift+L | リンク切れ・孤立ページの検出ビューを開く | [[hirake-link-check]] |
 | Ctrl+Shift+R | 文書指紋・類似検出ビューを開く | [[hirake-knowledge-exploration]] |
 | Ctrl+Shift+T | フォルダ統計ダッシュボードを開く | [[hirake-knowledge-exploration]] |
 | Ctrl+Shift+C | 無限キャンバス・モードを開く | [[hirake-canvas]] |
@@ -37,4 +39,4 @@ README の一覧をそのまま保持したもの。機能の説明は各ペー�
 
 ## 実装上の注意
 
-Ctrl+W / Ctrl+Tab / Ctrl+Shift+Tab / Ctrl+O は **WebView2 にフォーカスがあると WPF 側に届かない**。`viewer.js` が `postMessage` で C# 側へ転送している。出典は `CLAUDE.md` → [[hirake-architecture]]
+Ctrl+W / Ctrl+Tab / Ctrl+Shift+Tab / Ctrl+O / Ctrl+E は **WebView2 にフォーカスがあると WPF 側に届かない**。`viewer.js` が `postMessage` で C# 側へ転送している。出典は `CLAUDE.md` → [[hirake-architecture]]
