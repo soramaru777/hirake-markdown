@@ -10,9 +10,10 @@ sources:
   - .github/workflows/release.yml
   - https://github.com/soramaru777/hirake-markdown/issues/66
   - https://github.com/soramaru777/hirake-markdown/issues/70
+  - https://github.com/soramaru777/hirake-markdown/issues/76
 related: [[hirake-build]] [[hirake-file-association]] [[hirake-data-paths]]
 confidence: high
-updated: 2026-08-17
+updated: 2026-08-18
 ---
 
 利用者向けの配布形態は **GitHub Releases に置く単一の `HirakeSetup-x.y.z.exe`**（Inno Setup 製）。
@@ -65,12 +66,27 @@ develop / main への PR では `pr-build.yml` が走り、**インストーラ�
 
 `v*` タグを push すると `release.yml` が走り、インストーラを作って**下書きの** Release に添付する。**公開は手動**。
 
+**タグは手で打たず `scripts/tag-release.ps1` に生成させる**（ISSUE #76）。
+
 ```powershell
-git switch develop
+git switch main
 git pull
-git tag v1.0.0
-git push origin v1.0.0
+.\scripts\tag-release.ps1 -WhatIf   # 何をするかだけ表示する
+.\scripts\tag-release.ps1
 ```
+
+タグ名は `src/Hirake/Hirake.csproj` の `<Version>` から作られる。**手で書き写さない。** 打ち間違えても消せないため、写し間違いの経路自体を無くしてある。
+
+次のいずれかに当てはまると、**タグを作らずに中止**する。
+
+- 版が数値 3〜4 要素でない
+- いま居るコミットがリリース対象ブランチ（既定 `main`）の先端でない
+- 同名タグがローカルまたはリモートに既にある ＝ **版の上げ忘れ**
+
+> **タグ名を csproj から生成すると、`verify-tag` の「タグ名と版が一致すること」は必ず成功するようになる。**
+> 上げ忘れは不一致ではなく**重複**として現れるので、重複の検出がその柵を引き継ぐ。
+
+打つ先は **main のマージコミット**。実際の `v1.0.0` は `a36761a`（develop からのマージ）に付いている。`verify-tag` は「main **または** develop に含まれること」しか見ないため develop でも通るが、Releases と main を一致させるために main を既定にしている（`-Branch develop` で変更可）。
 
 守る決まりは 3 つ。
 
