@@ -11,9 +11,10 @@ sources:
   - https://github.com/soramaru777/hirake-markdown/issues/66
   - https://github.com/soramaru777/hirake-markdown/issues/70
   - https://github.com/soramaru777/hirake-markdown/issues/76
+  - https://github.com/soramaru777/hirake-markdown/issues/80
 related: [[hirake-build]] [[hirake-file-association]] [[hirake-data-paths]]
 confidence: high
-updated: 2026-08-19
+updated: 2026-08-20
 ---
 
 利用者向けの配布形態は **GitHub Releases に置く単一の `HirakeSetup-x.y.z.exe`**（Inno Setup 製）。
@@ -85,6 +86,39 @@ git pull
 
 > **タグ名を csproj から生成すると、`verify-tag` の「タグ名と版が一致すること」は必ず成功するようになる。**
 > 上げ忘れは不一致ではなく**重複**として現れるので、重複の検出がその柵を引き継ぐ。
+
+#### 成否は git の終了コードだけで見る（#80）
+
+v1.1.0 のリリースで、**push に成功しているのに「中止しました」と表示され、ローカルタグまで消えた**。
+
+Windows PowerShell 5.1 は `$ErrorActionPreference = 'Stop'` のとき、**ネイティブコマンドが stderr へ 1 行書いただけで例外を投げる**（終了コードは見ない）。`git push` は成功しても `To <remote>` や資格情報ヘルパーの警告を stderr に出すため、成功が失敗として扱われていた。**#66（bash の `-e` が終了コード 1 の正常な判定を致命扱いした）と同じ種類の誤り。**
+
+いまは git を呼ぶ間だけ `Continue` に戻し、**終了コードだけで判定する**。あわせて `2>&1` で混ざった stderr の行（`ErrorRecord`）は出力の行から除いている。混ぜたままだと `rev-parse` の結果が警告の文字列になったり、タグの重複を誤検出したりするため。
+
+**ロールバックは「リモートに無い」と確かめてからにする。** push 失敗時にローカルタグを戻す処理が、push 成功時にも走っていた。確かめられないときは**残す**（リモートにあるタグがローカルから消える方が、余分なタグが残るより困る）。
+
+#### `-Prefix` で作成〜push を試す
+
+#76 では 4 パターンを確認したが、**実際に push する経路だけ試していなかった**。そこに #80 があった。
+
+`v*` は消せないので試せない。**`-Prefix` で `v` 以外のタグ名にすれば、ルールセットの対象外のまま作成〜push を最後まで通せる。**
+
+```powershell
+.\scripts\tag-release.ps1 -Prefix tagtest-v
+git push origin :refs/tags/tagtest-v1.1.0   # 後始末
+git tag --delete tagtest-v1.1.0
+```
+
+`v` 以外を指定したときは「確認用のタグ」と表示し、`release.yml` が動かないことも出す。
+
+> **確認用の接頭辞は `v` で始められない。** `-Prefix vtest` は `vtest1.1.0` ＝ **`v*` に当たる**ので、ルールセットの対象になり消せなくなる。「確認用だから消せる」と案内しながら消せないタグを作らせないよう、スクリプト側で断る。
+
+**手で試さなくても済むよう、`scripts/test-tag-release.ps1` に残してある。** 一時フォルダに bare リポジトリを作って origin とし、`push` のときだけ stderr へ警告を出す git の shim 越しに、`tag-release.ps1` を作成〜push まで走らせる（GitHub には触れない）。**終了コードとタグの状態だけでなく、「どの理由で終わったか」と「push の経路まで実際に到達したか」も見る**（手前で落ちた実行を「rollback が効いた」と読み違えないため）。#80 の直前のスクリプトに当てると 8 件中 2 件しか通らない。
+
+```powershell
+.\scripts\test-tag-release.ps1          # 8 通りすべて
+.\scripts\test-tag-release.ps1 -Case ok # 1 つだけ、出力もそのまま見る
+```
 
 守る決まりは 3 つ。
 
