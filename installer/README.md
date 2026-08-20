@@ -1,15 +1,19 @@
 # インストーラのビルド
 
 `Hirake.iss` は [Inno Setup 6](https://jrsoftware.org/isdl.php) 用のスクリプトです。
-リリースでは `.github/workflows/release.yml` が自動でビルドしますが、
-ウィザードの文言や関連付けの挙動を確認したいときはローカルでも作れます。
+リリースでは `.github/workflows/build.yml`（`release-on-main.yml` から呼ばれる）が
+自動でビルドしますが、ウィザードの文言や関連付けの挙動を確認したいときはローカルでも作れます。
 
-> **リリースのタグは `scripts\tag-release.ps1` で作ってください。** タグ名は
-> `src\Hirake\Hirake.csproj` の `<Version>` から生成され、打つ先は
-> **`main` のマージコミット**です（ISSUE #76）。手で打つと写し間違いが起こりえますが、
+> **リリースにタグ付けの操作は要りません（ISSUE #81）。** `src\Hirake\Hirake.csproj` の
+> `<Version>` を上げて develop → main の PR をマージすると、`release-on-main.yml` が
+> ビルドし、**通ってからタグを作り**、下書き Release まで用意します。公開は手動です。
+>
+> 手元からタグを打つ `scripts\tag-release.ps1`（ISSUE #76）は、その経路が壊れたときの
+> 逃げ道として残しています。タグ名は同じく `<Version>` から生成され、打つ先は
+> **`main` のマージコミット**です。手で打つと写し間違いが起こりえますが、
 > `v*` タグは打ち直しも削除もできません。
 >
-> CI（`verify-tag`）が見るのは「タグのコミットが `main` **か** `develop` に含まれること」です。
+> 手動経路の CI（`verify-tag`）が見るのは「タグのコミットが `main` **か** `develop` に含まれること」です。
 > どちらにも含まれないコミットに `v*` タグを打つと `build` ジョブが失敗し、リリースは
 > 作られません（未マージのコードで配布物ができるのを防ぐため・ISSUE #52）。
 > **CI は develop の先端も通すので、`main` に打つことを守るのはスクリプト側です。**

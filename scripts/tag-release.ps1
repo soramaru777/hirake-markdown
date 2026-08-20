@@ -1,9 +1,14 @@
 ﻿#requires -Version 5.1
 <#
 .SYNOPSIS
-    csproj の <Version> からリリースタグを作成して push する。
+    csproj の <Version> からリリースタグを作成して push する（通常は不要）。
 
 .DESCRIPTION
+    **通常のリリースにこのスクリプトは要らない。** develop → main のマージで
+    .github/workflows/release-on-main.yml が動き、ビルドが通ってからタグを作り、
+    下書き Release まで用意する（ISSUE #81）。ここに残しているのは、その経路が
+    壊れたときに手元からリリースするための逃げ道。
+
     版の出所は src\Hirake\Hirake.csproj の <Version> だけ、という約束を
     タグ付けにも適用する。手で書き写すと打ち間違いが起こりうるが、v* タグは
     ルールセット protect-release-tags が update と deletion を拒否するため

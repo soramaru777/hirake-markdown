@@ -1,0 +1,214 @@
+# develop → main のマージでリリースする。タグ付けの工程は無い（ISSUE #81）。
+#
+# 人がやるのは「版を上げる」「main へマージする」「下書き Release を公開する」の 3 つ。
+# タグはこのワークフローが作る。手元の git や PowerShell の状態に依存する工程を
+# GitHub 側へ寄せるのが目的（v1.1.0 のリリースでは、タグ付けの工程だけで 3 回詰まり、
+# うち 2 つはローカル環境の状態が原因だった）。
+#
+#   check-version    … csproj の版を読み、同名タグの有無でリリース対象かを決める
+#   build            … build.yml（PR とリリースで共通の 1 本）を呼ぶ
+#   publish-release  … タグ作成と下書き Release（書き込み権限を持つ唯一のジョブ）
+#
+# ■ タグはビルドが通ってから作る
+# 従来（release.yml）はタグ push が起点なので、ビルドが落ちると使えないタグだけが残った。
+# v* タグはルールセット protect-release-tags により打ち直しも削除もできない（ISSUE #57）。
+# 順序を逆にすると、失敗しても何も残らない。タグが指すコミットとビルドしたコミットの
+# 同一性は、どちらも github.sha を使うことで保証する。
+#
+# ■ 二重にリリースされない
+# GITHUB_TOKEN で作ったタグの push イベントは、GitHub が再帰防止のため別のワークフローを
+# 起動しない。つまりここで作るタグで release.yml は動かない。
+# 例外は「人が同じタグを手で push した場合」。release.yml とこのワークフローは
+# concurrency group を共有しないため、同時に走りうる。逃げ道（手動タグ）を使うのは
+# こちらが壊れているときだけ、という前提で許容している。
+#
+# ■ 途中で落ちてもやり直せる
+# タグ作成・アセット添付はどちらも冪等にしてある。タグを作った直後に落ちた場合は、
+# check-version が「タグはあるが Release が無い」を見て、もう一度流す。
+name: release-on-main
+
+on:
+  push:
+    branches: [main]
+
+# 既定は読み取りのみ。書き込みが要るのは publish-release だけ。
+permissions:
+  contents: read
+
+# 走っているリリースを後続にキャンセルさせない。main へのマージ頻度は低いので待たせてよい。
+# group にワークフロー名を含める（concurrency group はリポジトリ内で共有されるため・#70）。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # 版を読み、リリース対象かどうかを決める。
+  #
+  # 版を上げずに main へマージすること（ドキュメントの修正など）は普通にあるので、
+  # 同名タグがある場合は**失敗させずに**「リリース対象なし」として終える。
+  # 上げ忘れの検出は develop → main の PR 側（enforce-pr-source.yml）が持つ。
+  check-version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      should_release: ${{ steps.decide.outputs.should_release }}
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      # 版の出所は csproj だけ、という約束はここでも同じ。
+      # 形式の検査（数値 3〜4 要素）は build.yml が持つので、ここでは読むだけにする。
+      - name: csproj から版を読む
+        id: version
+        shell: pwsh
+        run: |
+          [xml]$proj = Get-Content src/Hirake/Hirake.csproj
+          $version = ($proj.Project.PropertyGroup.Version | Where-Object { $_ }) -as [string]
+
+          if ([string]::IsNullOrWhiteSpace($version)) {
+              throw 'csproj に <Version> がありません。'
+          }
+
+          Write-Host "csproj の版: $version"
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "tag=v$version"    | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: リリース対象かどうかを決める
+        id: decide
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -uo pipefail
+
+          # matching-refs は該当が無くても 200 と空配列を返す。「タグが無い」と
+          # 「API が失敗した」を取り違えないため、単体取得（404 を返す）ではなく
+          # こちらを使う。gh が失敗したら黙って先へ進まず、赤で止める。
+          #
+          # なお GitHub Actions の shell: bash は -e 付きで起動するので、失敗しうる
+          # 呼び出しは必ず || で受ける（ISSUE #66 と同じ罠）。
+          # 前方一致で別のタグ（v1.1.0 に対する v1.1.01 など）も返るため、完全一致だけを見る。
+          # タグ名は env 経由でフィルタへ渡す（式へ文字列として埋め込まない）。
+          tag_sha=$(gh api "repos/${GH_REPO}/git/matching-refs/tags/${TAG}" \
+              --jq '.[] | select(.ref == "refs/tags/" + env.TAG) | .object.sha' | head -n 1) || {
+              echo "::error::タグ ${TAG} の照会に失敗しました。判定できないため中止します。"
+              exit 1
+          }
+
+          if [ -z "$tag_sha" ]; then
+              echo "should_release=true" >> "$GITHUB_OUTPUT"
+              echo "::notice::${TAG} は未作成です。ビルドが通ればこの版でリリースします。"
+              exit 0
+          fi
+
+          if [ "$tag_sha" != "$GITHUB_SHA" ]; then
+              # 版を上げずにマージした場合（ドキュメントの修正など）。ここは正常。
+              echo "should_release=false" >> "$GITHUB_OUTPUT"
+              echo "::notice::${TAG} は既にあります。リリース対象なしとして終了します（リリースする場合は csproj の <Version> を上げてください）。"
+              exit 0
+          fi
+
+          # タグはこのコミットを指しているのに Release が無い ＝ 前回の実行が
+          # タグ作成のあとで落ちた状態。skip すると手作業でしか直せなくなるため、
+          # もう一度流してやり直す（タグ作成もアセット添付も冪等にしてある）。
+          if gh release view "$TAG" >/dev/null 2>&1; then
+              echo "should_release=false" >> "$GITHUB_OUTPUT"
+              echo "::notice::${TAG} のタグと Release は作成済みです。リリース対象なしとして終了します。"
+          else
+              echo "should_release=true" >> "$GITHUB_OUTPUT"
+              echo "::warning::${TAG} のタグはありますが Release がありません。前回の実行が途中で終わったとみなしてやり直します。"
+          fi
+
+  # ビルド・テスト・インストーラ作成。PR（pr-build.yml）と同じ定義を呼ぶ。
+  build:
+    needs: check-version
+    if: needs.check-version.outputs.should_release == 'true'
+    uses: ./.github/workflows/build.yml
+
+  # タグ作成と Release。書き込み権限を持つのはここだけ。
+  # 第三者の Action もリポジトリのスクリプトも動かさない（書き込み可能な
+  # GITHUB_TOKEN を外部のコードへ渡さないため）。使うのは GitHub 提供の
+  # download-artifact と、ランナー同梱の gh だけ。
+  publish-release:
+    needs: [check-version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: installer
+          path: dist
+
+      # 下書きの Release ではタグが実際には作られない（GitHub は公開時に作る）。
+      # 「マージした時点でタグが存在する」ことを守るため、ここで明示的に作る。
+      - name: タグを作成する
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.check-version.outputs.tag }}
+        run: |
+          set -uo pipefail
+
+          status=0
+          gh api --method POST "repos/${GH_REPO}/git/refs" \
+              -f "ref=refs/tags/${TAG}" \
+              -f "sha=${GITHUB_SHA}" >/dev/null 2>&1 || status=$?
+
+          if [ "$status" -eq 0 ]; then
+              echo "::notice::タグ ${TAG} を ${GITHUB_SHA} に作成しました。"
+              exit 0
+          fi
+
+          # 失敗の理由は「既にある」だけとは限らない。同じコミットを指しているときだけ
+          # 自分の再実行とみなして続け、違うコミットなら止める（勝手に上書きしない）。
+          existing=$(gh api "repos/${GH_REPO}/git/matching-refs/tags/${TAG}" \
+              --jq '.[] | select(.ref == "refs/tags/" + env.TAG) | .object.sha' | head -n 1) || existing=''
+
+          if [ "$existing" = "$GITHUB_SHA" ]; then
+              echo "::notice::タグ ${TAG} は既に ${GITHUB_SHA} を指しています。作成済みとして続けます。"
+              exit 0
+          fi
+
+          if [ -n "$existing" ]; then
+              echo "::error::タグ ${TAG} は既にあり、別のコミット (${existing}) を指しています。v* タグは打ち直せないため、csproj の <Version> を上げて出し直してください。"
+          else
+              echo "::error::タグ ${TAG} を作成できませんでした（gh の終了コード ${status}）。"
+          fi
+          exit 1
+
+      - name: Release を下書きとして作成する
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.check-version.outputs.tag }}
+          VERSION: ${{ needs.check-version.outputs.version }}
+        run: |
+          set -uo pipefail
+
+          # 途中で失敗したあとの再実行で二重に作らない。ただし「あるから何もしない」に
+          # すると、アセットの無い Release がそのまま残りうる。既にあるときは
+          # **このビルドの成果物を上書きで添付する**（下書きのままにする）。
+          if gh release view "$TAG" >/dev/null 2>&1; then
+              echo "::notice::${TAG} の Release は既にあります。今回の成果物で上書きします。"
+              gh release upload "$TAG" \
+                "dist/HirakeSetup-${VERSION}.exe" \
+                "dist/HirakeSetup-${VERSION}.exe.sha256" \
+                --clobber
+          else
+              gh release create "$TAG" \
+                --draft \
+                --generate-notes \
+                "dist/HirakeSetup-${VERSION}.exe" \
+                "dist/HirakeSetup-${VERSION}.exe.sha256"
+          fi
+
+          echo "::notice::下書きの Release を用意しました。内容を確認して公開してください。"
