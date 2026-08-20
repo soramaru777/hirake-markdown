@@ -1,10 +1,18 @@
-# main ブランチへの PR は develop ブランチからのみ許可する
-# このチェックは main のルールセットで必須ステータスチェックに指定されている
+# main への PR に対する門番。2 つある。
+#
+#   develop-only    … PR の出所が develop であること
+#   version-bumped  … csproj の版が未リリースであること（＝上げ忘れの検出・ISSUE #81）
+#
+# develop-only は main のルールセットで必須ステータスチェックに指定されている。
+# **ジョブ名を変えるとその設定が外れる**ので、名前は動かさないこと。
 name: Enforce PR source branch
 
 on:
   pull_request:
     branches: [main]
+
+permissions:
+  contents: read
 
 jobs:
   develop-only:
@@ -12,9 +20,72 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check source branch
+        # ブランチ名は env 経由で渡す。run へ直接展開すると、ブランチ名に
+        # シェルのメタ文字を入れるだけでランナー上で任意のコマンドを実行できる。
+        env:
+          HEAD_REF: ${{ github.head_ref }}
         run: |
-          if [ "${{ github.head_ref }}" != "develop" ]; then
-            echo "::error::main への PR は develop ブランチからのみ許可されています（現在: ${{ github.head_ref }}）"
+          if [ "$HEAD_REF" != "develop" ]; then
+            echo "::error::main への PR は develop ブランチからのみ許可されています（現在: ${HEAD_REF}）"
             exit 1
           fi
           echo "OK: develop からの PR です"
+
+  # main へマージすると release-on-main.yml が動き、csproj の版でリリースする。
+  # 版を上げ忘れていると「リリース対象なし」で静かに終わるため、**マージ前**に気づけるよう
+  # ここで見る。マージ後に気づくと、リリースのためだけにもう 1 往復 PR が要る。
+  #
+  # 版を変えないマージ（ドキュメントの修正など）ではこのチェックが赤くなる。
+  # 必須ステータスチェックには入れていないので、その場合はそのままマージしてよい。
+  version-bumped:
+    name: version-bumped
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: csproj から版を読む
+        id: version
+        shell: pwsh
+        run: |
+          [xml]$proj = Get-Content src/Hirake/Hirake.csproj
+          $version = ($proj.Project.PropertyGroup.Version | Where-Object { $_ }) -as [string]
+
+          if ([string]::IsNullOrWhiteSpace($version)) {
+              throw 'csproj に <Version> がありません。'
+          }
+
+          Write-Host "csproj の版: $version"
+          "tag=v$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: その版がまだリリースされていないことを確認する
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -uo pipefail
+
+          # matching-refs は該当が無くても 200 と空配列を返す。単体取得（404）だと
+          # 「タグが無い」と「API が失敗した」の区別が付かず、通信障害のときに
+          # 上げ忘れを見逃す。gh が失敗したらここで赤くする。
+          #
+          # GitHub Actions の shell: bash は -e 付きで起動するので、失敗しうる呼び出しは
+          # 必ず || で受ける（ISSUE #66 と同じ罠）。
+          # 前方一致で別のタグも返るため、完全一致だけを「ある」と見なす。
+          # タグ名は env 経由でフィルタへ渡す（式へ文字列として埋め込まない）。
+          ref=$(gh api "repos/${GH_REPO}/git/matching-refs/tags/${TAG}" \
+              --jq '.[] | select(.ref == "refs/tags/" + env.TAG) | .ref' | head -n 1) || {
+              echo "::error::タグ ${TAG} の照会に失敗しました。判定できないため中止します。"
+              exit 1
+          }
+
+          if [ "$ref" = "refs/tags/${TAG}" ]; then
+              echo "::error::${TAG} は既にリリース済みです。このままマージしてもリリースは行われません。リリースする場合は src/Hirake/Hirake.csproj の <Version> を上げてください（版を変えないマージであれば、この失敗は無視してマージして構いません）。"
+              exit 1
+          fi
+
+          echo "OK: ${TAG} は未リリースです。マージするとこの版でリリースされます。"
