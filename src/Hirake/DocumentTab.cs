@@ -21,6 +21,13 @@ public interface IDocumentTabHost
     void ShortcutQuickPaste();
     void ShortcutGlobalSearch();
     void ShortcutToggleSidebar();
+
+    /// <summary>1 つ前に表示していたファイルへ戻る（ISSUE #84）。</summary>
+    void ShortcutGoBack();
+
+    /// <summary>ファイルツリーのルートを 1 つ上のフォルダへ移す（ISSUE #84）。</summary>
+    void ShortcutGoUpFolder();
+
     void ShortcutExportPdf();
     void ShortcutCycleTheme();
     void ShortcutToggleGraphView();
@@ -1581,6 +1588,12 @@ public class DocumentTab : IDisposable
                     break;
                 case "toggleSidebar":
                     _host.ShortcutToggleSidebar();
+                    break;
+                case "goBack":
+                    _host.ShortcutGoBack();
+                    break;
+                case "goUpFolder":
+                    _host.ShortcutGoUpFolder();
                     break;
                 case "exportPdf":
                     _host.ShortcutExportPdf();
