@@ -42,6 +42,24 @@ public partial class MainWindow : Window, IDocumentTabHost
     // ツリー構築の世代カウンタ。連続タブ切替時に最新要求の結果だけを反映するために使う。
     private int _treeBuildGeneration;
 
+    // ---- 表示履歴とツリールートの固定（ISSUE #84） --------------------
+    // 「1 つ前に表示していたファイル」へ戻るための履歴。ウィンドウごとに独立で、
+    // 保存しない（終了時に破棄）。タブの参照ではなく**パス**で持つのは、
+    // タブを閉じた後でも戻れるようにするため（戻り先のタブが無ければ開き直す）。
+    private const int MaxHistory = 50;
+    private readonly List<string> _history = new();
+
+    // 履歴の現在位置。-1 = 空。新しいファイルを表示すると増え、戻ると減る。
+    // 「進む」は今は UI が無いが、後から足せるよう index 方式にしてある
+    // （新しいファイルを表示したら index より後ろを捨てる、というブラウザと同じ規則）。
+    private int _historyIndex = -1;
+
+    // 戻る操作で起きるタブ切替を履歴に積まないための再入防止。
+    private bool _suppressHistoryPush;
+
+    // 上階層ボタンで固定したツリールート。null なら従来どおりアクティブタブへ追従する。
+    private string? _treeRootOverride;
+
     private DispatcherTimer? _searchDebounce;
     private CancellationTokenSource? _searchCts;
 
@@ -572,8 +590,20 @@ public partial class MainWindow : Window, IDocumentTabHost
             TabList.SelectedIndex = newIndex;
         }
 
+        // 全部閉じたら「上へ」で固定したルートも捨てる。UpdateSidebarForActiveTab では
+        // 一時的な null（Remove してから SelectedIndex を決めるまでの間）と区別が付かず、
+        // 固定を保つ側に倒してある。恒久的に 0 枚になったかはここでしか分からない。
+        // 残したままだと、閉じて開き直したのに以前の「上へ」の状態へ戻ってしまう。
+        if (Tabs.Count == 0)
+        {
+            _treeRootOverride = null;
+        }
+
         UpdateEmptyState();
         UpdateTitle();
+
+        // タブが 0 枚になるとツリーも消えるので、ボタンの状態を取り直す。
+        UpdateNavigationButtons();
     }
 
     private void CloseActiveTab()
@@ -590,6 +620,14 @@ public partial class MainWindow : Window, IDocumentTabHost
     {
         var selected = TabList.SelectedItem as DocumentTab;
 
+        // 履歴は**最初の await より前**に積む。await をまたぐと、戻る操作中の
+        // 再入防止フラグ（_suppressHistoryPush）が既に false へ戻っていて、
+        // 戻り先を「新しく表示したファイル」として積んでしまう。
+        if (selected != null)
+        {
+            PushHistory(selected.FilePath);
+        }
+
         foreach (var tab in Tabs)
         {
             tab.WebView.Visibility =
@@ -600,6 +638,7 @@ public partial class MainWindow : Window, IDocumentTabHost
 
         // サイドバー（ファイルツリー）をアクティブタブのフォルダへ追従させる。
         UpdateSidebarForActiveTab();
+        UpdateNavigationButtons();
 
         if (selected != null)
         {
@@ -1079,7 +1118,27 @@ public partial class MainWindow : Window, IDocumentTabHost
     {
         bool ctrl = (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
         bool shift = (Keyboard.Modifiers & ModifierKeys.Shift) == ModifierKeys.Shift;
+        bool alt = (Keyboard.Modifiers & ModifierKeys.Alt) == ModifierKeys.Alt;
 
+        // Alt 併用のショートカット（ISSUE #84）。Ctrl の判定より前に置く。
+        // WPF は Alt を伴うキーを Key.System として渡し、実際のキーは SystemKey に入る。
+        // e.Key だけを見ると Left/Up が取れない。
+        if (alt && !ctrl && !shift)
+        {
+            Key altKey = e.Key == Key.System ? e.SystemKey : e.Key;
+            if (altKey == Key.Left)
+            {
+                GoBack();
+                e.Handled = true;
+                return;
+            }
+            if (altKey == Key.Up)
+            {
+                GoUpFolder();
+                e.Handled = true;
+                return;
+            }
+        }
 
         if (!ctrl)
         {
@@ -1309,6 +1368,10 @@ public partial class MainWindow : Window, IDocumentTabHost
 
     public void ShortcutToggleSidebar() => ToggleSidebar();
 
+    public void ShortcutGoBack() => GoBack();
+
+    public void ShortcutGoUpFolder() => GoUpFolder();
+
     public void ShortcutCycleTheme() => CycleTheme();
 
     // 旧グラフビュー廃止後も、各ビュー JS からの 'toggleGraphView' は
@@ -1412,6 +1475,9 @@ public partial class MainWindow : Window, IDocumentTabHost
         {
             SettingsStore.Instance.SidebarVisible = visible;
         }
+
+        // サイドバーが閉じている間は「上へ」を押せない（押しても見た目が変わらないため）。
+        UpdateNavigationButtons();
     }
 
     /// <summary>アクティブタブのフォルダを起点にツリーを（必要なら再）構築し、ファイルをハイライトする。</summary>
@@ -1423,6 +1489,50 @@ public partial class MainWindow : Window, IDocumentTabHost
         }
 
         var active = TabList.SelectedItem as DocumentTab;
+
+        // 上階層ボタンで固定したルートは、アクティブファイルがその配下にある限り保つ
+        // （上げた直後に上のフォルダのファイルを開いても、元に戻らないようにするため）。
+        // 配下から外れたら固定を捨てて、従来どおりの追従へ戻す。
+        //
+        // active が null のときは固定を**捨てない**。タブを閉じると、次のタブが選ばれる前に
+        // 一瞬 SelectedItem が null になる（CloseTab が Remove してから SelectedIndex を
+        // 設定するため）。ここで捨てると、同じルート配下の隣のタブへ移っただけで
+        // 固定が解けてしまう。
+        if (_treeRootOverride != null && active != null)
+        {
+            // 固定した時点では検査済みでも、その後にフォルダをリンクへ差し替えられる。
+            // Directory.Exists を先に呼ぶと、UNC を指すリンクならそこでネットワークへ出る。
+            // CheckTreeRoot と同じく、**祖先の検査を先に**通してから実体を触る。
+            TraversalCheck overrideCheck =
+                FileTreeItem.CheckTraversal(_treeRootOverride, isDirectory: true);
+            string? overrideRoot = overrideCheck.ResolvedPath;
+
+            // 配下判定も実体パス同士で行う（リンク経由で開いたファイルは、揃えないと
+            // 一致しない・ISSUE #54）。解決できないときは元のパスで見る。
+            string activePath =
+                FileTreeItem.ResolveCheckedPath(active.FilePath, isDirectory: false) ?? active.FilePath;
+
+            if (!string.IsNullOrEmpty(overrideRoot)
+                && Directory.Exists(overrideRoot)
+                && IsUnder(activePath, overrideRoot))
+            {
+                _treeRootOverride = overrideRoot;
+
+                if (string.Equals(overrideRoot, _currentRootFolder, StringComparison.OrdinalIgnoreCase))
+                {
+                    HighlightActiveFile(active.FilePath);
+                }
+                else
+                {
+                    _currentRootFolder = overrideRoot;
+                    BuildFileTree(overrideRoot);
+                }
+                return;
+            }
+
+            _treeRootOverride = null;
+        }
+
         TraversalCheck check = active != null
             ? CheckTreeRoot(active.FilePath)
             : TraversalCheck.Blocked(TraversalVerdict.NotFound);
@@ -1430,13 +1540,20 @@ public partial class MainWindow : Window, IDocumentTabHost
 
         if (string.IsNullOrEmpty(folder) || !Directory.Exists(folder))
         {
+            // 走っている構築の結果を捨てる。世代を進めないと、先行していた
+            // BuildFileTreeAsync が後から世代チェックを通り、ここで空にしたはずの
+            // ツリーを古い内容で描き直す（タブ 0 枚なのに中身が出る）。
+            _treeBuildGeneration++;
+
             _currentRootFolder = null;
+            _activeTreeItem = null;
             FileTree.ItemsSource = null;
             TreeRootLabel.Text = string.Empty;
             // 「リンクを経由しているだけ」なら設定で開けるので、そう案内する。
             // ネットワークや不存在では案内しない（設定を入れても開けないため）。
             TreeEmptyLabel.Text = check.NeedsSettingHint ? LinkBlockedTreeMessage : TreeEmptyMessage;
             TreeEmptyLabel.Visibility = Visibility.Visible;
+            UpdateNavigationButtons();
             return;
         }
 
@@ -1499,31 +1616,229 @@ public partial class MainWindow : Window, IDocumentTabHost
 
         // 反映後に、現在アクティブなタブのファイルをハイライトする
         // （このツリーのルートに属している場合のみ）。
-        if (TabList.SelectedItem is DocumentTab active
-            && string.Equals(
-                ResolveTreeRoot(active.FilePath),
-                _currentRootFolder,
-                StringComparison.OrdinalIgnoreCase))
+        //
+        // 直親の一致ではなく**配下かどうか**で見る。「上へ」でルートを祖父母まで
+        // 上げると直親とは一致せず、ハイライトが出なくなるため（ISSUE #84）。
+        // 比較は実体パス同士で行う（ツリーの項目が実パスなのと同じ理由・ISSUE #54）。
+        if (TabList.SelectedItem is DocumentTab active)
         {
-            HighlightActiveFile(active.FilePath);
+            string? activeReal = FileTreeItem.ResolveCheckedPath(active.FilePath, isDirectory: false);
+            if (activeReal != null && IsUnder(activeReal, rootFolder))
+            {
+                HighlightActiveFile(active.FilePath);
+            }
+        }
+
+        // ルートが変わると「上へ」の可否も変わる（ドライブ直下まで来たら押せない）。
+        UpdateNavigationButtons();
+    }
+
+    // ---- 戻る / 上の階層へ（ISSUE #84） -------------------------------
+
+    private void BackButton_Click(object sender, RoutedEventArgs e) => GoBack();
+
+    private void UpButton_Click(object sender, RoutedEventArgs e) => GoUpFolder();
+
+    /// <summary>
+    /// 表示したファイルを履歴へ積む。<b>タブ切替のたびに呼ばれる。</b>
+    ///
+    /// <para>
+    /// 積まないのは 2 つ。戻る操作で起きた切替（<see cref="_suppressHistoryPush"/>）と、
+    /// 現在位置と同じパス（Ctrl+Tab の往復で履歴が伸びるのを防ぐ）。
+    /// </para>
+    /// </summary>
+    private void PushHistory(string fullPath)
+    {
+        if (_suppressHistoryPush || string.IsNullOrEmpty(fullPath))
+        {
+            return;
+        }
+
+        if (_historyIndex >= 0
+            && string.Equals(_history[_historyIndex], fullPath, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        // 戻った先から別のファイルを開いたら、それより後ろ（＝進む先）は捨てる。
+        // ブラウザと同じ規則にしておく（「進む」を後から足しても筋が通る）。
+        if (_historyIndex < _history.Count - 1)
+        {
+            _history.RemoveRange(_historyIndex + 1, _history.Count - _historyIndex - 1);
+        }
+
+        _history.Add(fullPath);
+        _historyIndex = _history.Count - 1;
+
+        if (_history.Count > MaxHistory)
+        {
+            _history.RemoveAt(0);
+            _historyIndex--;
         }
     }
 
     /// <summary>
-    /// タブのファイルが属するツリーのルート。<b>実体のパスで返す。</b>
-    ///
-    /// <see cref="FileTreeItem.LoadChildren"/> は実パスの子を返すので、ルートだけ
-    /// リンクのパスのまま持つと、同一ルート判定とハイライトの比較が食い違い、
-    /// ツリーが作り直され続ける（ISSUE #54）。解決できないものは扱わない。
+    /// 1 つ前に表示していたファイルへ戻る。
     ///
     /// <para>
-    /// ここは列挙の途中ではなく外から来たパスなので、祖先まで検査する
-    /// <see cref="FileTreeItem.ResolveCheckedPath"/> を使う。末端しか見ない
-    /// <c>ResolveRealPath</c> だと、祖先が UNC を指すリンクのパスを素通しし、
-    /// 直後の <c>Directory.Exists</c> でネットワークへ出てしまう。
+    /// 戻り先のタブが閉じられていても、履歴はパスで持っているので
+    /// <see cref="OpenFile(string)"/> が開き直す。消えたファイルは履歴から取り除いて
+    /// さらに 1 つ前を試す（ユーザー操作の結果ではないのでダイアログは出さない）。
     /// </para>
     /// </summary>
-    private static string? ResolveTreeRoot(string filePath) => CheckTreeRoot(filePath).ResolvedPath;
+    private void GoBack()
+    {
+        while (_historyIndex > 0)
+        {
+            string target = _history[_historyIndex - 1];
+
+            // 積んだ時点ではローカルのファイルでも、その後に祖先フォルダを UNC を指す
+            // リンクへ差し替えられる。File.Exists はそれだけでネットワークへ出るので、
+            // **実在確認より先に**祖先を検査する（CheckTreeRoot と同じ順序）。
+            // 開くのは検査を通った元のパス。実体パスに差し替えると、リンク経由で開いた
+            // 既存タブと別物になり、同じファイルのタブが 2 枚できる。
+            if (FileTreeItem.CheckTraversal(target, isDirectory: false).ResolvedPath == null
+                || !File.Exists(target))
+            {
+                _history.RemoveAt(_historyIndex - 1);
+                _historyIndex--;
+                continue;
+            }
+
+            _suppressHistoryPush = true;
+            try
+            {
+                OpenFile(target);
+            }
+            finally
+            {
+                _suppressHistoryPush = false;
+            }
+
+            // 実際に表示が移ったときだけ位置を戻す。OpenFile は正規化に失敗すると
+            // 黙って何もしないので、確認せずに減らすと「表示は変わらないのに履歴だけ
+            // 戻る」状態になり、次の 1 回で 2 つ飛ぶ。
+            if (TabList.SelectedItem is DocumentTab active
+                && string.Equals(active.FilePath, target, StringComparison.OrdinalIgnoreCase))
+            {
+                _historyIndex--;
+            }
+
+            UpdateNavigationButtons();
+            return;
+        }
+
+        // 戻れる項目が無くなった（全部消えていた）。
+        UpdateNavigationButtons();
+    }
+
+    /// <summary>
+    /// ファイルツリーのルートを 1 つ上のフォルダへ移す。<b>タブには触らない。</b>
+    ///
+    /// <para>
+    /// 親フォルダは既存と同じ規則（<see cref="FileTreeItem.CheckTraversal"/>）で検査する。
+    /// リンク経由・ネットワーク・不存在のときはルートを変えない。
+    /// </para>
+    /// </summary>
+    private void GoUpFolder()
+    {
+        if (!_sidebarVisible || string.IsNullOrEmpty(_currentRootFolder))
+        {
+            return;
+        }
+
+        string? parent;
+        try
+        {
+            parent = Path.GetDirectoryName(_currentRootFolder);
+        }
+        catch
+        {
+            return;
+        }
+
+        if (string.IsNullOrEmpty(parent))
+        {
+            // ドライブ直下。これ以上は上がれない。
+            return;
+        }
+
+        TraversalCheck check = FileTreeItem.CheckTraversal(parent, isDirectory: true);
+        if (check.NeedsSettingHint)
+        {
+            MessageBox.Show(
+                LinkBlockedDialogMessage,
+                "Hirake - フォルダを開けません",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        string? resolved = check.ResolvedPath;
+        if (string.IsNullOrEmpty(resolved) || !Directory.Exists(resolved))
+        {
+            MessageBox.Show(
+                "フォルダを開けません。",
+                "Hirake - フォルダを開けません",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+            return;
+        }
+
+        _treeRootOverride = resolved;
+        _currentRootFolder = resolved;
+        BuildFileTree(resolved);
+    }
+
+    /// <summary>戻る・上への 2 つのボタンの押せる/押せないを更新する。</summary>
+    private void UpdateNavigationButtons()
+    {
+        BackButton.IsEnabled = _historyIndex > 0;
+
+        bool canGoUp = false;
+        if (_sidebarVisible && !string.IsNullOrEmpty(_currentRootFolder))
+        {
+            try
+            {
+                canGoUp = !string.IsNullOrEmpty(Path.GetDirectoryName(_currentRootFolder));
+            }
+            catch
+            {
+                canGoUp = false;
+            }
+        }
+
+        UpButton.IsEnabled = canGoUp;
+    }
+
+    /// <summary>
+    /// <paramref name="path"/> が <paramref name="root"/> の配下かどうか。
+    /// 区切り文字を付けて比べるので、<c>C:\doc</c> が <c>C:\docs</c> に一致しない。
+    /// </summary>
+    private static bool IsUnder(string path, string root)
+    {
+        if (string.IsNullOrEmpty(path) || string.IsNullOrEmpty(root))
+        {
+            return false;
+        }
+
+        try
+        {
+            string fullPath = Path.GetFullPath(path);
+            string fullRoot = Path.GetFullPath(root);
+
+            if (!fullRoot.EndsWith(Path.DirectorySeparatorChar))
+            {
+                fullRoot += Path.DirectorySeparatorChar;
+            }
+
+            return fullPath.StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     /// <summary>
     /// 仮想タブ（構造クエリ・指紋・統計・キャンバス）の入口用。
@@ -1547,7 +1862,7 @@ public partial class MainWindow : Window, IDocumentTabHost
     }
 
     /// <summary>
-    /// <see cref="ResolveTreeRoot"/> の理由つき版。案内を出し分ける呼び出し側で使う。
+    /// <see cref="CheckTreeRoot"/> の案内つき版。出し分けが要る呼び出し側で使う。
     /// </summary>
     private static TraversalCheck CheckTreeRoot(string filePath)
     {
