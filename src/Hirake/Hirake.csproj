@@ -14,17 +14,18 @@
     <ApplicationIcon>app.ico</ApplicationIcon>
 
     <!-- 版の出所（ISSUE #40 設計 1-2）。
-         インストーラの AppVersion と GitHub Releases のタグ（v1.1.0 など）は、
-         release.yml がここと一致することを検証したうえで使う。
-         ここを更新したら scripts/tag-release.ps1 でタグを打つ。
+         インストーラの AppVersion と GitHub Releases のタグ（v1.2.0 など）は、
+         ここを読んで作る。
+         ここを上げて main へマージすると release-on-main.yml がタグを作る（ISSUE #81）。
+         手動でタグを打つ逃げ道は scripts/tag-release.ps1 と release.yml。
 
-         注意: release.yml が照合するのは <Version> だけ。下の 3 つを
-         上げ忘れても CI は通り、Releases は 1.1.0 なのに exe のプロパティは
-         1.0.0、という状態になる。4 つまとめて動かすこと。 -->
-    <Version>1.1.0</Version>
-    <FileVersion>1.1.0.0</FileVersion>
-    <AssemblyVersion>1.1.0.0</AssemblyVersion>
-    <InformationalVersion>1.1.0</InformationalVersion>
+         注意: CI が照合するのは <Version> だけ。下の 3 つを
+         上げ忘れても CI は通り、Releases は 1.2.0 なのに exe のプロパティは
+         1.1.0、という状態になる。4 つまとめて動かすこと。 -->
+    <Version>1.2.0</Version>
+    <FileVersion>1.2.0.0</FileVersion>
+    <AssemblyVersion>1.2.0.0</AssemblyVersion>
+    <InformationalVersion>1.2.0</InformationalVersion>
     <Product>Hirake</Product>
     <Company>Hirake</Company>
     <Copyright>Copyright (c) Hirake contributors</Copyright>
