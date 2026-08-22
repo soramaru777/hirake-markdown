@@ -80,8 +80,86 @@
   var PREVIEW_W = 420;
   var PREVIEW_H = 320;
 
+  // 全体俯瞰（fitToContent）の余白とラベルの寸法。
+  // 余白は画面 px で持つ（ワールド単位だと k に比例して痩せ、ズームアウトするほど
+  // 実質の余白が無くなる）。ラベル分はノード描画（`y = nodeRadius(d) + 14`）に合わせる。
+  var FIT_PAD = 24;      // 画面 px。k に依存しない余白
+  var FIT_GAP = 8;       // 画面 px。オーバーレイ（#cv-info / #cv-hint）との間隔
+  var OVERLAY_INSET = 12; // 画面 px。オーバーレイの top / bottom（canvas-template.html）
+  var LABEL_OFFSET = 14;  // ワールド単位。ラベルの baseline オフセットと一致させること
+  var LABEL_DESCENT = 4;  // ワールド単位。11px フォントのディセンダ概算
+
   // テーマ切替時にキャンバス本体へ通知するフック（buildCanvas が差し込む）。
   var onThemeChanged = null;
+
+  /* ---------- ラベル幅の計測（オフスクリーン canvas） ----------
+   * DOM に挿入しないので、レイアウトを起こさず、body.mode-card で
+   * .cv-node-label が display:none でも計測できる（getBBox は使えない）。 */
+
+  var labelMeasureCtx = null;  // CanvasRenderingContext2D | null（null = 計測不可）
+  var labelMeasureFont = null; // string。解決済みの font 文字列
+
+  // .cv-node-label の実効フォントを canvas の font 文字列にする。
+  // ハードコードするとテーマやフォント設定の変更で静かにずれるため CSS から引く。
+  function resolveLabelFont() {
+    if (labelMeasureFont !== null) return labelMeasureFont;
+    var font = '';
+    var svg = document.getElementById('cv-svg');
+    var probe = null;
+    try {
+      if (svg) {
+        probe = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        probe.setAttribute('class', 'cv-node-label');
+        // 文字は入れない（描画されない）。display:none の要素でも
+        // font-size / font-family の計算値は取れるので mode-card でも計測できる。
+        svg.appendChild(probe);
+        var cs = window.getComputedStyle(probe);
+        var size = cs.fontSize || '';
+        var family = cs.fontFamily || '';
+        var weight = cs.fontWeight || '';
+        if (size && family) {
+          font = (weight && weight !== '400' && weight !== 'normal' ? weight + ' ' : '') +
+            size + ' ' + family;
+        }
+      }
+    } catch (err) {
+      font = '';
+    } finally {
+      // 例外が出ても計測用の要素を DOM に残さない。
+      if (probe && probe.parentNode) probe.parentNode.removeChild(probe);
+    }
+    labelMeasureFont = font || '11px sans-serif';
+    return labelMeasureFont;
+  }
+
+  // ラベル 1 件の描画幅（ワールド単位）。SVG の font-size はズーム変換の
+  // 内側なので、11px はそのままワールド単位の 11 に相当する。
+  // 計測できない場合は 0 を返す（呼び出し側は半径だけで矩形を作る）。
+  function measureLabelWidth(text) {
+    if (typeof text !== 'string' || text === '') return 0;
+    if (labelMeasureCtx === null) {
+      try {
+        var el = document.createElement('canvas');
+        labelMeasureCtx = el.getContext ? el.getContext('2d') : null;
+      } catch (err) {
+        labelMeasureCtx = null;
+      }
+      if (!labelMeasureCtx) {
+        labelMeasureCtx = false; // 以後は再試行しない
+        return 0;
+      }
+      labelMeasureCtx.font = resolveLabelFont();
+    }
+    if (!labelMeasureCtx) return 0;
+    var w;
+    try {
+      w = labelMeasureCtx.measureText(text).width;
+    } catch (err) {
+      return 0;
+    }
+    if (typeof w !== 'number' || !isFinite(w) || w < 0) return 0;
+    return w;
+  }
 
   function currentThemeName() {
     return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
@@ -715,30 +793,92 @@
 
     /* ---------- 全体俯瞰（Ctrl+G / グラフボタンの着地点） ---------- */
 
-    // 全ノードが収まる遠景へズームアウトする。座標が未確定（力学モデルが
-    // まだ動いていない）場合は何もしない（simulation 終了時に再試行される）。
-    function fitToContent() {
+    // 全ノードの描画範囲（ワールド座標）。中心座標だけでなく、円の半径と
+    // ラベルの実測幅を含めた「占有矩形」を集約する。ラベルは text-anchor: middle で
+    // 円の下にだけ出るため、上下で式が非対称になる。
+    // 座標未確定・ノード 0 件のときは null。
+    function contentBounds() {
       var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       nodes.forEach(function (n) {
         if (typeof n.x !== 'number' || typeof n.y !== 'number') return;
         if (!isFinite(n.x) || !isFinite(n.y)) return;
-        if (n.x < minX) minX = n.x;
-        if (n.x > maxX) maxX = n.x;
-        if (n.y < minY) minY = n.y;
-        if (n.y > maxY) maxY = n.y;
+        var r = nodeRadius(n);
+        if (typeof r !== 'number' || !isFinite(r) || r < 0) r = 0;
+        // ラベルが円より狭いときは円がはみ出すので、広い方を採る。
+        var halfW = Math.max(r, measureLabelWidth(n.label || n.id) / 2);
+        var left = n.x - halfW;
+        var right = n.x + halfW;
+        var top = n.y - r;
+        var bottom = n.y + r + LABEL_OFFSET + LABEL_DESCENT;
+        if (left < minX) minX = left;
+        if (right > maxX) maxX = right;
+        if (top < minY) minY = top;
+        if (bottom > maxY) maxY = bottom;
       });
-      if (!isFinite(minX) || !isFinite(minY)) return false;
+      if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) return null;
+      return { minX: minX, maxX: maxX, minY: minY, maxY: maxY };
+    }
 
-      var pad = 80;
-      var w = Math.max(maxX - minX, 1) + pad * 2;
-      var h = Math.max(maxY - minY, 1) + pad * 2;
-      var k = Math.min(window.innerWidth / w, window.innerHeight / h);
+    // オーバーレイ（#cv-info は左上・#cv-hint は左下に fixed）を避けた画面矩形（CSS px）。
+    // 左右はオーバーレイが画面幅を占めないため余白だけで扱う。
+    // 要素が無い場合も壊れないようにする（将来テンプレートから消えても安全）。
+    function overlayHeight(id) {
+      var el = document.getElementById(id);
+      if (!el) return 0;
+      var h = el.offsetHeight;
+      if (typeof h !== 'number' || !isFinite(h) || h < 0) return 0;
+      // 非表示（display:none）の要素は offsetHeight が 0 になるので自然に無視される。
+      return h;
+    }
 
+    function usableViewport() {
+      var vw = window.innerWidth;
+      var vh = window.innerHeight;
+      var top = Math.max(FIT_PAD, overlayHeight('cv-info') + OVERLAY_INSET + FIT_GAP);
+      var hint = overlayHeight('cv-hint');
+      var bottom = Math.min(vh - FIT_PAD, vh - (hint + OVERLAY_INSET + FIT_GAP));
+      return { left: FIT_PAD, top: top, right: vw - FIT_PAD, bottom: bottom };
+    }
+
+    // 全ノードが収まる遠景へズームアウトする。座標が未確定（力学モデルが
+    // まだ動いていない）場合は何もしない（simulation 終了時に再試行される）。
+    function fitToContent() {
+      var b = contentBounds();
+      if (!b) return false; // 座標未確定・ノード 0 件。再試行に委ねる。
+
+      var vp = usableViewport();
+      var availW = vp.right - vp.left;
+      var availH = vp.bottom - vp.top;
+      if (availW <= 0 || availH <= 0) {
+        // ウィンドウが極端に小さい／オーバーレイが画面を埋めた。
+        // オーバーレイの控除をやめ、余白だけで確保し直す。
+        availW = window.innerWidth - FIT_PAD * 2;
+        availH = window.innerHeight - FIT_PAD * 2;
+        vp = {
+          left: FIT_PAD,
+          top: FIT_PAD,
+          right: window.innerWidth - FIT_PAD,
+          bottom: window.innerHeight - FIT_PAD,
+        };
+        if (availW <= 0 || availH <= 0) return false;
+      }
+
+      var w = Math.max(b.maxX - b.minX, 1);
+      var h = Math.max(b.maxY - b.minY, 1);
+      var k = Math.min(availW / w, availH / h);
+      if (typeof k !== 'number' || !isFinite(k) || k <= 0) return false; // 壊れた transform は適用しない
+
+      if (k < 0.1 && window.console && console.info) {
+        // ズーム下限に当たると全体は収まらない。切り分けできるよう記録だけ残す
+        // （scaleExtent は変更しない。別 ISSUE の判断材料）。
+        console.info('[Hirake] fitToContent: ズーム下限 0.1 に到達（全体が収まりません）');
+      }
       // 俯瞰は必ず遠景（ノード + エッジ）で見せる。ズーム下限は scaleExtent に合わせる。
       k = Math.max(0.1, Math.min(k, CARD_THRESHOLD - 0.05));
 
-      var tx = window.innerWidth / 2 - k * (minX + maxX) / 2;
-      var ty = window.innerHeight / 2 - k * (minY + maxY) / 2;
+      // 画面中央ではなく「使える矩形の中央」に合わせる（オーバーレイの分だけ下/上へ寄る）。
+      var tx = (vp.left + vp.right) / 2 - k * (b.minX + b.maxX) / 2;
+      var ty = (vp.top + vp.bottom) / 2 - k * (b.minY + b.maxY) / 2;
       stageSel.call(zoomBehavior.transform, d3.zoomIdentity.translate(tx, ty).scale(k));
       return true;
     }
