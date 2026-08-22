@@ -43,10 +43,25 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
-                <!-- 移動の 3 つ（戻る・上へ・サイドバー）。右側は「別のビューを開く」群で種類が違う。 -->
+                <!-- 移動の 3 つ（サイドバー・戻る・上へ）。右側は「別のビューを開く」群で種類が違う。 -->
                 <StackPanel Grid.Column="0"
                             Orientation="Horizontal"
                             VerticalAlignment="Center">
+
+                    <!-- ファイルツリー サイドバーのトグル。表示の土台を出し入れするものなので一番左に置く。 -->
+                    <Button x:Name="SidebarToggleButton"
+                            Click="SidebarToggleButton_Click"
+                            Content="&#xE700;"
+                            FontFamily="Segoe MDL2 Assets"
+                            FontSize="14"
+                            Padding="8,4"
+                            Margin="6,2,0,2"
+                            VerticalAlignment="Center"
+                            BorderThickness="0"
+                            Background="Transparent"
+                            Foreground="{DynamicResource ChromeText}"
+                            Cursor="Hand"
+                            ToolTip="ファイルツリー (Ctrl+B)" />
 
                     <!-- 1 つ前に表示していたファイルへ戻る（ISSUE #84） -->
                     <Button x:Name="BackButton"
@@ -55,7 +70,7 @@
                             FontFamily="Segoe MDL2 Assets"
                             FontSize="14"
                             Padding="8,4"
-                            Margin="6,2,0,2"
+                            Margin="2,2,0,2"
                             VerticalAlignment="Center"
                             BorderThickness="0"
                             Background="Transparent"
@@ -70,28 +85,13 @@
                             FontFamily="Segoe MDL2 Assets"
                             FontSize="14"
                             Padding="8,4"
-                            Margin="2,2,0,2"
-                            VerticalAlignment="Center"
-                            BorderThickness="0"
-                            Background="Transparent"
-                            Foreground="{DynamicResource ChromeText}"
-                            Cursor="Hand"
-                            ToolTip="上の階層へ (Alt+↑)" />
-
-                    <!-- ファイルツリー サイドバーのトグル -->
-                    <Button x:Name="SidebarToggleButton"
-                            Click="SidebarToggleButton_Click"
-                            Content="&#xE700;"
-                            FontFamily="Segoe MDL2 Assets"
-                            FontSize="14"
-                            Padding="8,4"
                             Margin="2,2,2,2"
                             VerticalAlignment="Center"
                             BorderThickness="0"
                             Background="Transparent"
                             Foreground="{DynamicResource ChromeText}"
                             Cursor="Hand"
-                            ToolTip="ファイルツリー (Ctrl+B)" />
+                            ToolTip="上の階層へ (Alt+↑)" />
                 </StackPanel>
 
                 <ListBox x:Name="TabList"
