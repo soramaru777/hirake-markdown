@@ -80,6 +80,14 @@
   var PREVIEW_W = 420;
   var PREVIEW_H = 320;
 
+  // カードの重なり順。#cv-cards は transform を持つため独立した stacking context を
+  // 作る。ここの値は その内側でしか効かないので、情報バー（#cv-info, z-index:10）は
+  // 常にカードより前のまま。
+  var Z_CARD = 1;          // 通常カード
+  var Z_PREVIEW_BASE = 10; // プレビュー（ビューポート中心に近いほど上に積む）
+  var Z_HOVER = 100;       // ポインタが乗っているカード
+  var Z_FRONT = 200;       // クリックで最前面に固定したカード
+
   // 全体俯瞰（fitToContent）の余白とラベルの寸法。
   // 余白は画面 px で持つ（ワールド単位だと k に比例して痩せ、ズームアウトするほど
   // 実質の余白が無くなる）。ラベル分はノード描画（`y = nodeRadius(d) + 14`）に合わせる。
@@ -291,8 +299,14 @@
       document.body.classList.toggle('mode-preview', k >= PREVIEW_THRESHOLD);
       if (card) {
         refreshCards();
+      } else {
+        // カードが display:none になると mouseleave が来ないことがある。
+        // ホバーを持ち越すと、カードモードへ戻った直後に前回のカードが
+        // 最前面のまま復帰する。固定（frontId）は仕様として持ち越す。
+        hoverId = null;
       }
-      // 近景を抜けた場合の破棄もここで行うため、カードモード外でも必ず呼ぶ。
+      // 近景を抜けた場合の破棄もここで行うため、カードモード外でも必ず呼ぶ
+      // （refreshPreviews の末尾で applyStacking も走る）。
       refreshPreviews();
     }
 
@@ -391,6 +405,7 @@
       Object.keys(cardById).forEach(function (id) {
         if (!visible[id]) {
           detachPreview(id);
+          forgetStacking(id); // 消えたカードを hoverId / frontId が指し続けないようにする
           var el = cardById[id];
           if (el && el.parentNode) el.parentNode.removeChild(el);
           delete cardById[id];
@@ -399,6 +414,37 @@
 
       // カードは仮想化で作り直されるため、近景の割り当ても都度貼り直す。
       refreshPreviews();
+    }
+
+    /* ---------- 重なり順（カードは DOM 挿入順では前後が決まらない） ----------
+     * 座標は動かさず「どれを手前に出すか」だけを制御する。z-index を書くのは
+     * applyStacking() だけに保つ（CSS 側には z-index を置かない。ランクを
+     * インライン style で与える以上、CSS の :hover 指定は負けて効かないため）。 */
+
+    var previewRank = Object.create(null); // id -> 0..MAX_PREVIEWS-1（0 = 中心に最も近い）
+    var hoverId = null;                    // ポインタが乗っているカード
+    var frontId = null;                    // クリックで固定した最前面
+
+    function applyStacking() {
+      Object.keys(cardById).forEach(function (id) {
+        var card = cardById[id];
+        if (!card) return;
+        var z = Z_CARD;
+        if (card.classList.contains('is-preview')) {
+          var rank = previewRank[id];
+          if (typeof rank !== 'number' || !isFinite(rank)) rank = MAX_PREVIEWS - 1;
+          z = Z_PREVIEW_BASE + (MAX_PREVIEWS - 1 - rank);
+        }
+        if (id === hoverId) z = Z_HOVER;
+        if (id === frontId) z = Z_FRONT; // 固定はホバーより強い
+        card.style.zIndex = String(z);
+      });
+    }
+
+    function forgetStacking(id) {
+      delete previewRank[id];
+      if (hoverId === id) hoverId = null;
+      if (frontId === id) frontId = null;
     }
 
     function createCard(n) {
@@ -424,6 +470,30 @@
       name.className = 'cv-card-name';
       name.textContent = n.label;
       card.appendChild(name);
+
+      // 重なり順。ポインタが乗っている間は手前へ、クリックすると外しても手前のまま。
+      // iframe はカードの子孫なので、本文へポインタを移しても mouseleave は起きない。
+      card.addEventListener('mouseenter', function () {
+        safeRun(function () {
+          hoverId = n.id;
+          applyStacking();
+        });
+      });
+      card.addEventListener('mouseleave', function () {
+        safeRun(function () {
+          if (hoverId === n.id) hoverId = null;
+          applyStacking();
+        });
+      });
+      card.addEventListener('pointerdown', function (event) {
+        safeRun(function () {
+          // 主ボタンだけ。右クリックはピン解除（contextmenu）なので固定しない。
+          // d3.drag の既定 filter も非主ボタンを除外しており、そこに揃える。
+          if (event && typeof event.button === 'number' && event.button !== 0) return;
+          frontId = n.id;
+          applyStacking();
+        });
+      });
 
       card.addEventListener('dblclick', function (event) {
         event.stopPropagation();
@@ -583,6 +653,8 @@
     function refreshPreviews() {
       if (!document.body.classList.contains('mode-preview')) {
         Object.keys(cardById).forEach(detachPreview);
+        previewRank = Object.create(null); // 近景を抜けたらランクを残さない
+        applyStacking();
         return;
       }
 
@@ -600,17 +672,23 @@
       });
       candidates.sort(function (a, b) { return a.d - b.d; });
 
+      var adopted = candidates.slice(0, MAX_PREVIEWS);
       var keep = Object.create(null);
-      candidates.slice(0, MAX_PREVIEWS).forEach(function (c) {
+      adopted.forEach(function (c) {
         keep[c.id] = true;
       });
 
       Object.keys(cardById).forEach(function (id) {
         if (!keep[id]) detachPreview(id);
       });
-      candidates.slice(0, MAX_PREVIEWS).forEach(function (c) {
+      // ランクは採用した時点で必ず入れる（iframe が貼れたかどうかとは独立。
+      // URL 未到着で attachPreview が途中 return しても順位は変わらない）。
+      previewRank = Object.create(null);
+      adopted.forEach(function (c, i) {
+        previewRank[c.id] = i;
         attachPreview(c.id, c.n);
       });
+      applyStacking();
     }
 
     // ホストからのプレビュー URL 通知。
