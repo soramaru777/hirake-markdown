@@ -43,21 +43,56 @@
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
 
-                <!-- ファイルツリー サイドバーのトグル -->
-                <Button x:Name="SidebarToggleButton"
-                        Grid.Column="0"
-                        Click="SidebarToggleButton_Click"
-                        Content="&#xE700;"
-                        FontFamily="Segoe MDL2 Assets"
-                        FontSize="14"
-                        Padding="8,4"
-                        Margin="6,2,2,2"
-                        VerticalAlignment="Center"
-                        BorderThickness="0"
-                        Background="Transparent"
-                        Foreground="{DynamicResource ChromeText}"
-                        Cursor="Hand"
-                        ToolTip="ファイルツリー (Ctrl+B)" />
+                <!-- 移動の 3 つ（サイドバー・戻る・上へ）。右側は「別のビューを開く」群で種類が違う。 -->
+                <StackPanel Grid.Column="0"
+                            Orientation="Horizontal"
+                            VerticalAlignment="Center">
+
+                    <!-- ファイルツリー サイドバーのトグル。表示の土台を出し入れするものなので一番左に置く。 -->
+                    <Button x:Name="SidebarToggleButton"
+                            Click="SidebarToggleButton_Click"
+                            Content="&#xE700;"
+                            FontFamily="Segoe MDL2 Assets"
+                            FontSize="14"
+                            Padding="8,4"
+                            Margin="6,2,0,2"
+                            VerticalAlignment="Center"
+                            BorderThickness="0"
+                            Background="Transparent"
+                            Foreground="{DynamicResource ChromeText}"
+                            Cursor="Hand"
+                            ToolTip="ファイルツリー (Ctrl+B)" />
+
+                    <!-- 1 つ前に表示していたファイルへ戻る（ISSUE #84） -->
+                    <Button x:Name="BackButton"
+                            Click="BackButton_Click"
+                            Content="&#xE72B;"
+                            FontFamily="Segoe MDL2 Assets"
+                            FontSize="14"
+                            Padding="8,4"
+                            Margin="2,2,0,2"
+                            VerticalAlignment="Center"
+                            BorderThickness="0"
+                            Background="Transparent"
+                            Foreground="{DynamicResource ChromeText}"
+                            Cursor="Hand"
+                            ToolTip="戻る (Alt+←)" />
+
+                    <!-- ファイルツリーのルートを 1 つ上のフォルダへ（ISSUE #84） -->
+                    <Button x:Name="UpButton"
+                            Click="UpButton_Click"
+                            Content="&#xE74A;"
+                            FontFamily="Segoe MDL2 Assets"
+                            FontSize="14"
+                            Padding="8,4"
+                            Margin="2,2,2,2"
+                            VerticalAlignment="Center"
+                            BorderThickness="0"
+                            Background="Transparent"
+                            Foreground="{DynamicResource ChromeText}"
+                            Cursor="Hand"
+                            ToolTip="上の階層へ (Alt+↑)" />
+                </StackPanel>
 
                 <ListBox x:Name="TabList"
                  Grid.Column="1"

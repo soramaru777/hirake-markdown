@@ -21,6 +21,8 @@
  *     { type:'shortcut', action:'quickPaste' }       Ctrl+Shift+V
  *     { type:'shortcut', action:'globalSearch' }     Ctrl+Shift+F
  *     { type:'shortcut', action:'toggleSidebar' }    Ctrl+B
+ *     { type:'shortcut', action:'goBack' }           Alt+←
+ *     { type:'shortcut', action:'goUpFolder' }       Alt+↑
  *     { type:'shortcut', action:'exportPdf' }        Ctrl+Shift+E
  *     { type:'shortcut', action:'cycleTheme' }       Ctrl+Shift+D
  *     { type:'shortcut', action:'toggleGraphView' }  Ctrl+G
@@ -1199,6 +1201,27 @@
       if (isSearchBarOpen()) {
         event.preventDefault();
         closeSearchBar();
+      }
+      return;
+    }
+
+    // Alt+← / Alt+↑ をホストへ転送する（ISSUE #84）。Ctrl の判定より前に置く。
+    // 下の行は altKey が押されているだけで打ち切るので、ここを通さないと届かない。
+    //
+    // WebView2 は既定で Alt+← を「自分の履歴の戻る」として扱う。preventDefault で
+    // その既定動作を止め、Hirake の戻る（1 つ前に表示していたファイル）だけを起こす。
+    // 本文は NavigateToString で表示しているので WebView2 側の履歴はほぼ空だが、
+    // 見出しへのアンカーリンクを踏むと履歴が積まれるため、この抑止が要る。
+    if (event.altKey && !event.ctrlKey && !event.shiftKey && !event.metaKey) {
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        postToHost({ type: 'shortcut', action: 'goBack' });
+        return;
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        postToHost({ type: 'shortcut', action: 'goUpFolder' });
+        return;
       }
       return;
     }

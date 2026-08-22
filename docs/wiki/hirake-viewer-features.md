@@ -5,9 +5,10 @@ project: hirake
 scope: shared
 sources:
   - README.md
+  - https://github.com/soramaru777/hirake-markdown/issues/84
 related: [[hirake-overview]] [[hirake-shortcuts]] [[hirake-knowledge-exploration]] [[hirake-wikilinks]] [[hirake-external-editor]]
 confidence: high
-updated: 2026-08-18
+updated: 2026-08-21
 ---
 
 Hirake の「Markdown を表示する」側の機能一覧。知識ベース探索の機能は [[hirake-knowledge-exploration]] に分けてある。
@@ -26,6 +27,8 @@ Hirake の「Markdown を表示する」側の機能一覧。知識ベース探�
 
 - **ページ内検索（Ctrl+F）** — インクリメンタル検索
 - **ファイルツリー（Ctrl+B）** — アクティブなファイルのフォルダを起点にサイドバー表示
+- **戻る（Alt+←）** — 1 つ前に表示していたファイルへ戻る。**タブを閉じた後でも戻れる**（履歴はパスで持っていて、タブが無ければ開き直す）。ウィンドウごとに独立していて、最大 50 件・保存はしない
+- **上の階層へ（Alt+↑）** — ファイルツリーのルートを 1 つ上のフォルダへ移す。**タブは動かない。** 上げたルートは、読んでいるファイルがその配下にある限り保たれ、外れると通常の追従（アクティブなファイルのフォルダ）に戻る。リンク経由・ネットワーク先は既存の規則どおり開かない（→ [[hirake-directory-links]]）
 - **ズーム記憶** — Ctrl+ホイール / Ctrl+0。倍率は**全タブに反映**され記憶される。操作中は現在倍率が右下に出て、止まると自動で消える（印刷・PDF には写らない）
 - **クイックプレビュー** — クリップボードのテキスト（Ctrl+Shift+V）やドロップしたテキストを一時 Markdown として即表示
 

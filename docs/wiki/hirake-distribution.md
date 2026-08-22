@@ -11,9 +11,11 @@ sources:
   - https://github.com/soramaru777/hirake-markdown/issues/66
   - https://github.com/soramaru777/hirake-markdown/issues/70
   - https://github.com/soramaru777/hirake-markdown/issues/76
+  - https://github.com/soramaru777/hirake-markdown/issues/80
+  - https://github.com/soramaru777/hirake-markdown/issues/81
 related: [[hirake-build]] [[hirake-file-association]] [[hirake-data-paths]]
 confidence: high
-updated: 2026-08-19
+updated: 2026-08-21
 ---
 
 利用者向けの配布形態は **GitHub Releases に置く単一の `HirakeSetup-x.y.z.exe`**（Inno Setup 製）。
@@ -62,11 +64,37 @@ develop / main への PR では `pr-build.yml` が走り、**インストーラ�
 > **取得元が差し替えられたことに、タグを打つ前に気づける**のが要点。Inno Setup の SHA-256 照合は
 > 初回のリリースが成功しても消えないリスクで、PR で回していれば事前に分かる。
 
-### タグを打つ
+### リリースする（main へマージする）
 
-`v*` タグを push すると `release.yml` が走り、インストーラを作って**下書きの** Release に添付する。**公開は手動**。
+**人がやるのは「版を上げる」「develop → main の PR をマージする」「下書き Release を公開する」の 3 つだけ**（ISSUE #81）。タグ付けの工程は無い。
 
-**タグは手で打たず `scripts/tag-release.ps1` に生成させる**（ISSUE #76）。
+```
+csproj の <Version> を上げる  →  develop → main の PR をマージ  →  下書き Release を公開
+                                        │
+                                        ▼  release-on-main.yml
+                        版を読む → 同名タグが無ければ build.yml
+                                → 通ったらタグ作成 → 下書き Release
+```
+
+`release-on-main.yml` の 3 ジョブ:
+
+| ジョブ | すること |
+|---|---|
+| `check-version` | csproj の版を読み、`v<版>` タグの有無を見る。**あれば「リリース対象なし」として緑のまま終わる**（版を変えないマージのため） |
+| `build` | `build.yml` を呼ぶ（PR と同じ 1 本） |
+| `publish-release` | **ビルドが通ってから**タグを作り、下書き Release を作る。書き込み権限を持つ唯一のジョブ |
+
+**タグはビルドが通ってから作る。** 従来はタグ push が起点だったため、ビルドが落ちると**使えないタグだけが残った**（`v*` は消せない・#57）。順序を逆にすると失敗しても何も残らず、直して main をもう一度動かせばよい。タグとビルドの同一性は、どちらも `github.sha` を使うことで保証している。
+
+**版の上げ忘れは PR の時点で分かる。** `enforce-pr-source.yml` の `version-bumped` が、csproj の版のタグが既にあれば赤くする。**必須ステータスチェックには入れていない**ので、版を変えないマージではそのままマージしてよい。
+
+> **下書きの Release ではタグが実際には作られない**（GitHub は公開時に作る）。「マージした時点でタグが存在する」ことを守るため、`publish-release` は Git refs API で明示的にタグを作ってから Release を作る。
+>
+> **二重にリリースされない。** `GITHUB_TOKEN` が作ったタグの push では、GitHub の再帰防止により `release.yml` が起動しない。
+
+### 手元からタグを打つ（逃げ道）
+
+**通常は使わない。** 上の経路が壊れたときのために `scripts/tag-release.ps1` を残してある（ISSUE #76）。`release.yml`（`on: push: tags: v*`）も、この手動経路のために残している。
 
 ```powershell
 git switch main
@@ -86,9 +114,42 @@ git pull
 > **タグ名を csproj から生成すると、`verify-tag` の「タグ名と版が一致すること」は必ず成功するようになる。**
 > 上げ忘れは不一致ではなく**重複**として現れるので、重複の検出がその柵を引き継ぐ。
 
+#### 成否は git の終了コードだけで見る（#80）
+
+v1.1.0 のリリースで、**push に成功しているのに「中止しました」と表示され、ローカルタグまで消えた**。
+
+Windows PowerShell 5.1 は `$ErrorActionPreference = 'Stop'` のとき、**ネイティブコマンドが stderr へ 1 行書いただけで例外を投げる**（終了コードは見ない）。`git push` は成功しても `To <remote>` や資格情報ヘルパーの警告を stderr に出すため、成功が失敗として扱われていた。**#66（bash の `-e` が終了コード 1 の正常な判定を致命扱いした）と同じ種類の誤り。**
+
+いまは git を呼ぶ間だけ `Continue` に戻し、**終了コードだけで判定する**。あわせて `2>&1` で混ざった stderr の行（`ErrorRecord`）は出力の行から除いている。混ぜたままだと `rev-parse` の結果が警告の文字列になったり、タグの重複を誤検出したりするため。
+
+**ロールバックは「リモートに無い」と確かめてからにする。** push 失敗時にローカルタグを戻す処理が、push 成功時にも走っていた。確かめられないときは**残す**（リモートにあるタグがローカルから消える方が、余分なタグが残るより困る）。
+
+#### `-Prefix` で作成〜push を試す
+
+#76 では 4 パターンを確認したが、**実際に push する経路だけ試していなかった**。そこに #80 があった。
+
+`v*` は消せないので試せない。**`-Prefix` で `v` 以外のタグ名にすれば、ルールセットの対象外のまま作成〜push を最後まで通せる。**
+
+```powershell
+.\scripts\tag-release.ps1 -Prefix tagtest-v
+git push origin :refs/tags/tagtest-v1.1.0   # 後始末
+git tag --delete tagtest-v1.1.0
+```
+
+`v` 以外を指定したときは「確認用のタグ」と表示し、`release.yml` が動かないことも出す。
+
+> **確認用の接頭辞は `v` で始められない。** `-Prefix vtest` は `vtest1.1.0` ＝ **`v*` に当たる**ので、ルールセットの対象になり消せなくなる。「確認用だから消せる」と案内しながら消せないタグを作らせないよう、スクリプト側で断る。
+
+**手で試さなくても済むよう、`scripts/test-tag-release.ps1` に残してある。** 一時フォルダに bare リポジトリを作って origin とし、`push` のときだけ stderr へ警告を出す git の shim 越しに、`tag-release.ps1` を作成〜push まで走らせる（GitHub には触れない）。**終了コードとタグの状態だけでなく、「どの理由で終わったか」と「push の経路まで実際に到達したか」も見る**（手前で落ちた実行を「rollback が効いた」と読み違えないため）。#80 の直前のスクリプトに当てると 8 件中 2 件しか通らない。
+
+```powershell
+.\scripts\test-tag-release.ps1          # 8 通りすべて
+.\scripts\test-tag-release.ps1 -Case ok # 1 つだけ、出力もそのまま見る
+```
+
 守る決まりは 3 つ。
 
-1. **タグは main のマージコミットへ打つ。** `scripts/tag-release.ps1` が既定で強制する。未マージの feature へ打った場合は CI も落ちる（#52）
+1. **タグは main のマージコミットへ打つ。** マージ起点の経路では `github.sha` がそれ自身なので構造的に守られる。手動経路では `scripts/tag-release.ps1` の既定（`-Branch main`）が強制する。未マージの feature へ打った場合は CI も落ちる（#52）
    > PR でも同じビルドが走るようになったため（#70）、ここで初めて失敗する範囲は狭い。
    > この検証は、2026-08-16 まで**正しいタグでも必ず失敗していた**（#66）。GitHub Actions の `shell: bash` が
    > `-e` 付きで起動するため、「含まれない」を表す終了コード 1 でシェルごと落ちていた。原因と対処は
@@ -103,6 +164,8 @@ git pull
 > **CI はここまで縛っていない。** `verify-tag` が見るのは「main **または** develop に含まれること」＝**未マージのコミットでないこと**（#52）だけで、develop の先端に打っても通ってしまう。
 >
 > つまり**運用ルールの方が CI より厳しい**。守っているのは `scripts/tag-release.ps1` の既定（`-Branch main`）とこの手順書であって、CI ではない。`-Branch develop` は残してあるが、通常の運用では使わない。
+>
+> **マージ起点の経路（#81）ではこの差が消える。** `release-on-main.yml` は `on: push: branches: [main]` で起動し、`github.sha` は main のその時点のコミットそのものなので、「develop の先端に打ってしまう」が起こりえない。上の注意が効くのは手動経路だけになった。
 
 ### これは権限の分離ではない
 
