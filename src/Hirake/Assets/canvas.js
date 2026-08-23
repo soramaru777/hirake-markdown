@@ -3,6 +3,8 @@
  *
  * 無限キャンバス・モード（ADR-0001 案B: 単一 WebView2 の HTML キャンバス方式）。
  * d3-zoom / d3-force / ピン留めを基礎に、セマンティックズームを提供する:
+ *   - 極小遠景（k < TINY_SCALE）: 遠景のうち、ノードの輪郭を画面 px に固定して
+ *     点が消えないようにした領域。描画のみの差で、レイアウトは遠景と同じ
  *   - 遠景（k < CARD_THRESHOLD）: ノード + エッジ（旧グラフビュー相当・Ctrl+G の着地点）
  *   - 中間（k >= CARD_THRESHOLD）: カード（ファイル名 + サムネイル）。エッジは薄く継続
  *   - 近景（k >= PREVIEW_THRESHOLD）: 中央に近い最大 MAX_PREVIEWS 枚が実文書の
@@ -72,6 +74,14 @@
   var CARD_W = 180;
   var CARD_H = 130;
   var VIEW_MARGIN = 200; // カード仮想化のビューポートマージン（世界座標）
+
+  // ズーム（カメラ）の倍率レンジ。下限は「標準の下限」であって固定ではなく、
+  // 全体俯瞰が要求する倍率に合わせて lowerMinScale() がその都度下げる。
+  // ピン留めは任意座標に置けるため、必要な倍率は原理的に無制限に小さくなりうる。
+  var MIN_SCALE = 0.05;      // 標準のズーム下限（走査上限 500 件の最悪ケース 0.067 を下回る）
+  var MIN_SCALE_HARD = 0.01; // 動的に下げるときの絶対下限。壊れた保存座標への保険
+  var MAX_SCALE = 4;         // ズーム上限
+  var TINY_SCALE = 0.15;     // これ未満は「極小遠景」。輪郭を画面 px に固定する
 
   // 近景（インラインプレビュー）へ切り替えるズーム率と、プレビューカードのサイズ。
   // iframe は重いので枚数を厳しく絞り、ビューポート中心に近いものだけを生かす。
@@ -177,17 +187,36 @@
    * 情報バー・テーマ
    * ========================================================== */
 
+  // 情報バーの注記（#cv-info .cv-info-note）。走査打ち切りと「収まらない」は
+  // 同時に成り立ちうるので、各々を独立に持って 1 行へ合成する。
+  var noteState = { truncated: false, notFit: false };
+
+  function renderNote() {
+    var el = document.querySelector('#cv-info .cv-info-note');
+    if (!el) return;
+    var parts = [];
+    if (noteState.truncated) parts.push('上限到達のため一部未走査');
+    if (noteState.notFit) parts.push('全体を表示しきれません');
+    el.textContent = parts.length ? '（' + parts.join('・') + '）' : '';
+  }
+
+  // 絶対下限（MIN_SCALE_HARD）まで下げても全体が収まらなかったことの記録。
+  function setNotFit(v) {
+    v = !!v;
+    if (noteState.notFit === v) return;
+    noteState.notFit = v;
+    renderNote();
+  }
+
   function updateInfoBar(data, nodeCount, edgeCount) {
     var folderEl = document.querySelector('#cv-info .cv-info-folder');
     var countsEl = document.querySelector('#cv-info .cv-info-counts');
-    var noteEl = document.querySelector('#cv-info .cv-info-note');
     if (folderEl) folderEl.textContent = data.folderLabel || data.root || '';
     if (countsEl) {
       countsEl.textContent = ' — ' + nodeCount + ' ファイル / ' + edgeCount + ' リンク';
     }
-    if (noteEl && data.truncated) {
-      noteEl.textContent = '（上限到達のため一部未走査）';
-    }
+    noteState.truncated = !!data.truncated;
+    renderNote();
   }
 
   function setTheme(theme) {
@@ -273,8 +302,11 @@
 
     var currentTransform = d3.zoomIdentity;
 
+    // 現在のズーム下限。セッション内で下げることしかしない（→ lowerMinScale）。
+    var currentMinScale = MIN_SCALE;
+
     var zoomBehavior = d3.zoom()
-      .scaleExtent([0.1, 4])
+      .scaleExtent([currentMinScale, MAX_SCALE])
       .filter(zoomFilter)
       .on('zoom', function (event) {
         currentTransform = event.transform;
@@ -284,6 +316,30 @@
         scheduleSave();
       });
     stageSel.call(zoomBehavior).on('dblclick.zoom', null);
+
+    // ズーム下限を、到達したい倍率まで下げる。上げ直さない。
+    //
+    // 上げ直さないのは d3-zoom の性質による。scaleExtent() を変えても現在の
+    // transform は再クランプされず、次のズーム操作で初めてクランプされる。
+    // 「内容が小さくなったから下限を戻す」と、収まって見えていた画面が
+    // ホイールを 1 目盛り回した瞬間に跳ね上がる。下げる一方なら原理的に起きない
+    // （キャンバスを開き直せば MIN_SCALE に戻る）。
+    function lowerMinScale(k) {
+      if (typeof k !== 'number' || !isFinite(k) || k <= 0) return;
+      var next = Math.max(MIN_SCALE_HARD, Math.min(currentMinScale, k));
+      if (next < currentMinScale) {
+        currentMinScale = next;
+        zoomBehavior.scaleExtent([currentMinScale, MAX_SCALE]);
+      }
+    }
+
+    // 復元する倍率をズーム操作で戻せる範囲へ収める。
+    // zoomBehavior.transform は scaleExtent でクランプされないため、壊れた
+    // 保存値（k = 1e-9 など）をそのまま適用すると、下限を 0.01 まで下げられる
+    // ようになったぶん、ホイールでも実用的な倍率へ戻せなくなる。
+    function clampRestoredScale(k) {
+      return Math.max(MIN_SCALE_HARD, Math.min(MAX_SCALE, k));
+    }
 
     function applyTransform() {
       var t = currentTransform;
@@ -297,6 +353,8 @@
       var card = k >= CARD_THRESHOLD;
       document.body.classList.toggle('mode-card', card);
       document.body.classList.toggle('mode-preview', k >= PREVIEW_THRESHOLD);
+      // 極小遠景。CSS だけが反応する（k >= TINY_SCALE では従来の描画と同一）。
+      document.body.classList.toggle('mode-tiny', k < TINY_SCALE);
       if (card) {
         refreshCards();
       } else {
@@ -946,13 +1004,15 @@
       var k = Math.min(availW / w, availH / h);
       if (typeof k !== 'number' || !isFinite(k) || k <= 0) return false; // 壊れた transform は適用しない
 
-      if (k < 0.1 && window.console && console.info) {
-        // ズーム下限に当たると全体は収まらない。切り分けできるよう記録だけ残す
-        // （scaleExtent は変更しない。別 ISSUE の判断材料）。
-        console.info('[Hirake] fitToContent: ズーム下限 0.1 に到達（全体が収まりません）');
-      }
-      // 俯瞰は必ず遠景（ノード + エッジ）で見せる。ズーム下限は scaleExtent に合わせる。
-      k = Math.max(0.1, Math.min(k, CARD_THRESHOLD - 0.05));
+      // 俯瞰は必ず遠景（ノード + エッジ）で見せる（上限側の丸め）。
+      k = Math.min(k, CARD_THRESHOLD - 0.05);
+      // 下限側は丸めない。必要な倍率までズーム下限そのものを下げる。
+      // 絶対下限より下は「収まらない」として頭打ちにし、情報バーに出す。
+      setNotFit(k < MIN_SCALE_HARD);
+      k = Math.max(MIN_SCALE_HARD, k);
+      // transform 自体はクランプされないが、この後のホイール操作は scaleExtent で
+      // クランプされる。下限を広げておかないと、次の 1 目盛りで俯瞰が跳ねる。
+      lowerMinScale(k);
 
       // 画面中央ではなく「使える矩形の中央」に合わせる（オーバーレイの分だけ下/上へ寄る）。
       var tx = (vp.left + vp.right) / 2 - k * (b.minX + b.maxX) / 2;
@@ -979,6 +1039,8 @@
         if (typeof x !== 'number' || !isFinite(x)) return;
         if (typeof y !== 'number' || !isFinite(y)) return;
         pendingFit = false;
+        k = clampRestoredScale(k);
+        lowerMinScale(k); // 保存された k が下限未満でも、次の操作で跳ねさせない
         stageSel.call(zoomBehavior.transform, d3.zoomIdentity.translate(x, y).scale(k));
       });
     };
@@ -993,8 +1055,10 @@
         pendingFit = false;
       }
     } else if (data.view && typeof data.view.k === 'number' && data.view.k > 0) {
+      var restoredK = clampRestoredScale(data.view.k);
+      lowerMinScale(restoredK);
       stageSel.call(zoomBehavior.transform,
-        d3.zoomIdentity.translate(data.view.x || 0, data.view.y || 0).scale(data.view.k));
+        d3.zoomIdentity.translate(data.view.x || 0, data.view.y || 0).scale(restoredK));
     } else {
       applyTransform();
       updateMode();

@@ -147,6 +147,24 @@
     font-weight: 600;
   }
 
+  /* 極小遠景（k < TINY_SCALE）: 輪郭を画面 px に固定して、点が背景に消えないようにする。
+     半径をワールド座標で膨らませるとラベル位置・forceCollide・contentBounds まで
+     連動してレイアウトが変わるため、描画だけに閉じる CSS で対処する。
+     k >= TINY_SCALE では class が付かないので従来の描画と同一。 */
+  body.mode-tiny .cv-node-circle {
+    vector-effect: non-scaling-stroke;
+    stroke-width: 2px;
+  }
+
+  /* ピン留めの区別は極小遠景でも残す（上のルールに勝てるよう詳細度を上げる） */
+  body.mode-tiny .cv-node-circle.is-pinned {
+    stroke-width: 3px;
+  }
+
+  body.mode-tiny .cv-edge {
+    vector-effect: non-scaling-stroke;
+  }
+
   /* カードモードでは遠景ノードを隠す（エッジは薄く残す） */
   body.mode-card .cv-node-circle,
   body.mode-card .cv-node-label {
