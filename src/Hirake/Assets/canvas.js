@@ -3,6 +3,8 @@
  *
  * 無限キャンバス・モード（ADR-0001 案B: 単一 WebView2 の HTML キャンバス方式）。
  * d3-zoom / d3-force / ピン留めを基礎に、セマンティックズームを提供する:
+ *   - 極小遠景（k < TINY_SCALE）: 遠景のうち、ノードの輪郭を画面 px に固定して
+ *     点が消えないようにした領域。描画のみの差で、レイアウトは遠景と同じ
  *   - 遠景（k < CARD_THRESHOLD）: ノード + エッジ（旧グラフビュー相当・Ctrl+G の着地点）
  *   - 中間（k >= CARD_THRESHOLD）: カード（ファイル名 + サムネイル）。エッジは薄く継続
  *   - 近景（k >= PREVIEW_THRESHOLD）: 中央に近い最大 MAX_PREVIEWS 枚が実文書の
@@ -73,6 +75,14 @@
   var CARD_H = 130;
   var VIEW_MARGIN = 200; // カード仮想化のビューポートマージン（世界座標）
 
+  // ズーム（カメラ）の倍率レンジ。下限は「標準の下限」であって固定ではなく、
+  // 全体俯瞰が要求する倍率に合わせて lowerMinScale() がその都度下げる。
+  // ピン留めは任意座標に置けるため、必要な倍率は原理的に無制限に小さくなりうる。
+  var MIN_SCALE = 0.05;      // 標準のズーム下限（走査上限 500 件の最悪ケース 0.067 を下回る）
+  var MIN_SCALE_HARD = 0.01; // 動的に下げるときの絶対下限。壊れた保存座標への保険
+  var MAX_SCALE = 4;         // ズーム上限
+  var TINY_SCALE = 0.15;     // これ未満は「極小遠景」。輪郭を画面 px に固定する
+
   // 近景（インラインプレビュー）へ切り替えるズーム率と、プレビューカードのサイズ。
   // iframe は重いので枚数を厳しく絞り、ビューポート中心に近いものだけを生かす。
   var PREVIEW_THRESHOLD = 2.5;
@@ -80,8 +90,94 @@
   var PREVIEW_W = 420;
   var PREVIEW_H = 320;
 
+  // カードの重なり順。#cv-cards は transform を持つため独立した stacking context を
+  // 作る。ここの値は その内側でしか効かないので、情報バー（#cv-info, z-index:10）は
+  // 常にカードより前のまま。
+  var Z_CARD = 1;          // 通常カード
+  var Z_PREVIEW_BASE = 10; // プレビュー（ビューポート中心に近いほど上に積む）
+  var Z_HOVER = 100;       // ポインタが乗っているカード
+  var Z_FRONT = 200;       // クリックで最前面に固定したカード
+
+  // 全体俯瞰（fitToContent）の余白とラベルの寸法。
+  // 余白は画面 px で持つ（ワールド単位だと k に比例して痩せ、ズームアウトするほど
+  // 実質の余白が無くなる）。ラベル分はノード描画（`y = nodeRadius(d) + 14`）に合わせる。
+  var FIT_PAD = 24;      // 画面 px。k に依存しない余白
+  var FIT_GAP = 8;       // 画面 px。オーバーレイ（#cv-info / #cv-hint）との間隔
+  var OVERLAY_INSET = 12; // 画面 px。オーバーレイの top / bottom（canvas-template.html）
+  var LABEL_OFFSET = 14;  // ワールド単位。ラベルの baseline オフセットと一致させること
+  var LABEL_DESCENT = 4;  // ワールド単位。11px フォントのディセンダ概算
+
   // テーマ切替時にキャンバス本体へ通知するフック（buildCanvas が差し込む）。
   var onThemeChanged = null;
+
+  /* ---------- ラベル幅の計測（オフスクリーン canvas） ----------
+   * DOM に挿入しないので、レイアウトを起こさず、body.mode-card で
+   * .cv-node-label が display:none でも計測できる（getBBox は使えない）。 */
+
+  var labelMeasureCtx = null;  // CanvasRenderingContext2D | null（null = 計測不可）
+  var labelMeasureFont = null; // string。解決済みの font 文字列
+
+  // .cv-node-label の実効フォントを canvas の font 文字列にする。
+  // ハードコードするとテーマやフォント設定の変更で静かにずれるため CSS から引く。
+  function resolveLabelFont() {
+    if (labelMeasureFont !== null) return labelMeasureFont;
+    var font = '';
+    var svg = document.getElementById('cv-svg');
+    var probe = null;
+    try {
+      if (svg) {
+        probe = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        probe.setAttribute('class', 'cv-node-label');
+        // 文字は入れない（描画されない）。display:none の要素でも
+        // font-size / font-family の計算値は取れるので mode-card でも計測できる。
+        svg.appendChild(probe);
+        var cs = window.getComputedStyle(probe);
+        var size = cs.fontSize || '';
+        var family = cs.fontFamily || '';
+        var weight = cs.fontWeight || '';
+        if (size && family) {
+          font = (weight && weight !== '400' && weight !== 'normal' ? weight + ' ' : '') +
+            size + ' ' + family;
+        }
+      }
+    } catch (err) {
+      font = '';
+    } finally {
+      // 例外が出ても計測用の要素を DOM に残さない。
+      if (probe && probe.parentNode) probe.parentNode.removeChild(probe);
+    }
+    labelMeasureFont = font || '11px sans-serif';
+    return labelMeasureFont;
+  }
+
+  // ラベル 1 件の描画幅（ワールド単位）。SVG の font-size はズーム変換の
+  // 内側なので、11px はそのままワールド単位の 11 に相当する。
+  // 計測できない場合は 0 を返す（呼び出し側は半径だけで矩形を作る）。
+  function measureLabelWidth(text) {
+    if (typeof text !== 'string' || text === '') return 0;
+    if (labelMeasureCtx === null) {
+      try {
+        var el = document.createElement('canvas');
+        labelMeasureCtx = el.getContext ? el.getContext('2d') : null;
+      } catch (err) {
+        labelMeasureCtx = null;
+      }
+      if (!labelMeasureCtx) {
+        labelMeasureCtx = false; // 以後は再試行しない
+        return 0;
+      }
+      labelMeasureCtx.font = resolveLabelFont();
+    }
+    if (!labelMeasureCtx) return 0;
+    var w;
+    try {
+      w = labelMeasureCtx.measureText(text).width;
+    } catch (err) {
+      return 0;
+    }
+    if (typeof w !== 'number' || !isFinite(w) || w < 0) return 0;
+    return w;
+  }
 
   function currentThemeName() {
     return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
@@ -91,17 +187,36 @@
    * 情報バー・テーマ
    * ========================================================== */
 
+  // 情報バーの注記（#cv-info .cv-info-note）。走査打ち切りと「収まらない」は
+  // 同時に成り立ちうるので、各々を独立に持って 1 行へ合成する。
+  var noteState = { truncated: false, notFit: false };
+
+  function renderNote() {
+    var el = document.querySelector('#cv-info .cv-info-note');
+    if (!el) return;
+    var parts = [];
+    if (noteState.truncated) parts.push('上限到達のため一部未走査');
+    if (noteState.notFit) parts.push('全体を表示しきれません');
+    el.textContent = parts.length ? '（' + parts.join('・') + '）' : '';
+  }
+
+  // 絶対下限（MIN_SCALE_HARD）まで下げても全体が収まらなかったことの記録。
+  function setNotFit(v) {
+    v = !!v;
+    if (noteState.notFit === v) return;
+    noteState.notFit = v;
+    renderNote();
+  }
+
   function updateInfoBar(data, nodeCount, edgeCount) {
     var folderEl = document.querySelector('#cv-info .cv-info-folder');
     var countsEl = document.querySelector('#cv-info .cv-info-counts');
-    var noteEl = document.querySelector('#cv-info .cv-info-note');
     if (folderEl) folderEl.textContent = data.folderLabel || data.root || '';
     if (countsEl) {
       countsEl.textContent = ' — ' + nodeCount + ' ファイル / ' + edgeCount + ' リンク';
     }
-    if (noteEl && data.truncated) {
-      noteEl.textContent = '（上限到達のため一部未走査）';
-    }
+    noteState.truncated = !!data.truncated;
+    renderNote();
   }
 
   function setTheme(theme) {
@@ -187,8 +302,11 @@
 
     var currentTransform = d3.zoomIdentity;
 
+    // 現在のズーム下限。セッション内で下げることしかしない（→ lowerMinScale）。
+    var currentMinScale = MIN_SCALE;
+
     var zoomBehavior = d3.zoom()
-      .scaleExtent([0.1, 4])
+      .scaleExtent([currentMinScale, MAX_SCALE])
       .filter(zoomFilter)
       .on('zoom', function (event) {
         currentTransform = event.transform;
@@ -198,6 +316,30 @@
         scheduleSave();
       });
     stageSel.call(zoomBehavior).on('dblclick.zoom', null);
+
+    // ズーム下限を、到達したい倍率まで下げる。上げ直さない。
+    //
+    // 上げ直さないのは d3-zoom の性質による。scaleExtent() を変えても現在の
+    // transform は再クランプされず、次のズーム操作で初めてクランプされる。
+    // 「内容が小さくなったから下限を戻す」と、収まって見えていた画面が
+    // ホイールを 1 目盛り回した瞬間に跳ね上がる。下げる一方なら原理的に起きない
+    // （キャンバスを開き直せば MIN_SCALE に戻る）。
+    function lowerMinScale(k) {
+      if (typeof k !== 'number' || !isFinite(k) || k <= 0) return;
+      var next = Math.max(MIN_SCALE_HARD, Math.min(currentMinScale, k));
+      if (next < currentMinScale) {
+        currentMinScale = next;
+        zoomBehavior.scaleExtent([currentMinScale, MAX_SCALE]);
+      }
+    }
+
+    // 復元する倍率をズーム操作で戻せる範囲へ収める。
+    // zoomBehavior.transform は scaleExtent でクランプされないため、壊れた
+    // 保存値（k = 1e-9 など）をそのまま適用すると、下限を 0.01 まで下げられる
+    // ようになったぶん、ホイールでも実用的な倍率へ戻せなくなる。
+    function clampRestoredScale(k) {
+      return Math.max(MIN_SCALE_HARD, Math.min(MAX_SCALE, k));
+    }
 
     function applyTransform() {
       var t = currentTransform;
@@ -211,10 +353,18 @@
       var card = k >= CARD_THRESHOLD;
       document.body.classList.toggle('mode-card', card);
       document.body.classList.toggle('mode-preview', k >= PREVIEW_THRESHOLD);
+      // 極小遠景。CSS だけが反応する（k >= TINY_SCALE では従来の描画と同一）。
+      document.body.classList.toggle('mode-tiny', k < TINY_SCALE);
       if (card) {
         refreshCards();
+      } else {
+        // カードが display:none になると mouseleave が来ないことがある。
+        // ホバーを持ち越すと、カードモードへ戻った直後に前回のカードが
+        // 最前面のまま復帰する。固定（frontId）は仕様として持ち越す。
+        hoverId = null;
       }
-      // 近景を抜けた場合の破棄もここで行うため、カードモード外でも必ず呼ぶ。
+      // 近景を抜けた場合の破棄もここで行うため、カードモード外でも必ず呼ぶ
+      // （refreshPreviews の末尾で applyStacking も走る）。
       refreshPreviews();
     }
 
@@ -313,6 +463,7 @@
       Object.keys(cardById).forEach(function (id) {
         if (!visible[id]) {
           detachPreview(id);
+          forgetStacking(id); // 消えたカードを hoverId / frontId が指し続けないようにする
           var el = cardById[id];
           if (el && el.parentNode) el.parentNode.removeChild(el);
           delete cardById[id];
@@ -321,6 +472,37 @@
 
       // カードは仮想化で作り直されるため、近景の割り当ても都度貼り直す。
       refreshPreviews();
+    }
+
+    /* ---------- 重なり順（カードは DOM 挿入順では前後が決まらない） ----------
+     * 座標は動かさず「どれを手前に出すか」だけを制御する。z-index を書くのは
+     * applyStacking() だけに保つ（CSS 側には z-index を置かない。ランクを
+     * インライン style で与える以上、CSS の :hover 指定は負けて効かないため）。 */
+
+    var previewRank = Object.create(null); // id -> 0..MAX_PREVIEWS-1（0 = 中心に最も近い）
+    var hoverId = null;                    // ポインタが乗っているカード
+    var frontId = null;                    // クリックで固定した最前面
+
+    function applyStacking() {
+      Object.keys(cardById).forEach(function (id) {
+        var card = cardById[id];
+        if (!card) return;
+        var z = Z_CARD;
+        if (card.classList.contains('is-preview')) {
+          var rank = previewRank[id];
+          if (typeof rank !== 'number' || !isFinite(rank)) rank = MAX_PREVIEWS - 1;
+          z = Z_PREVIEW_BASE + (MAX_PREVIEWS - 1 - rank);
+        }
+        if (id === hoverId) z = Z_HOVER;
+        if (id === frontId) z = Z_FRONT; // 固定はホバーより強い
+        card.style.zIndex = String(z);
+      });
+    }
+
+    function forgetStacking(id) {
+      delete previewRank[id];
+      if (hoverId === id) hoverId = null;
+      if (frontId === id) frontId = null;
     }
 
     function createCard(n) {
@@ -346,6 +528,30 @@
       name.className = 'cv-card-name';
       name.textContent = n.label;
       card.appendChild(name);
+
+      // 重なり順。ポインタが乗っている間は手前へ、クリックすると外しても手前のまま。
+      // iframe はカードの子孫なので、本文へポインタを移しても mouseleave は起きない。
+      card.addEventListener('mouseenter', function () {
+        safeRun(function () {
+          hoverId = n.id;
+          applyStacking();
+        });
+      });
+      card.addEventListener('mouseleave', function () {
+        safeRun(function () {
+          if (hoverId === n.id) hoverId = null;
+          applyStacking();
+        });
+      });
+      card.addEventListener('pointerdown', function (event) {
+        safeRun(function () {
+          // 主ボタンだけ。右クリックはピン解除（contextmenu）なので固定しない。
+          // d3.drag の既定 filter も非主ボタンを除外しており、そこに揃える。
+          if (event && typeof event.button === 'number' && event.button !== 0) return;
+          frontId = n.id;
+          applyStacking();
+        });
+      });
 
       card.addEventListener('dblclick', function (event) {
         event.stopPropagation();
@@ -505,6 +711,8 @@
     function refreshPreviews() {
       if (!document.body.classList.contains('mode-preview')) {
         Object.keys(cardById).forEach(detachPreview);
+        previewRank = Object.create(null); // 近景を抜けたらランクを残さない
+        applyStacking();
         return;
       }
 
@@ -522,17 +730,23 @@
       });
       candidates.sort(function (a, b) { return a.d - b.d; });
 
+      var adopted = candidates.slice(0, MAX_PREVIEWS);
       var keep = Object.create(null);
-      candidates.slice(0, MAX_PREVIEWS).forEach(function (c) {
+      adopted.forEach(function (c) {
         keep[c.id] = true;
       });
 
       Object.keys(cardById).forEach(function (id) {
         if (!keep[id]) detachPreview(id);
       });
-      candidates.slice(0, MAX_PREVIEWS).forEach(function (c) {
+      // ランクは採用した時点で必ず入れる（iframe が貼れたかどうかとは独立。
+      // URL 未到着で attachPreview が途中 return しても順位は変わらない）。
+      previewRank = Object.create(null);
+      adopted.forEach(function (c, i) {
+        previewRank[c.id] = i;
         attachPreview(c.id, c.n);
       });
+      applyStacking();
     }
 
     // ホストからのプレビュー URL 通知。
@@ -715,30 +929,94 @@
 
     /* ---------- 全体俯瞰（Ctrl+G / グラフボタンの着地点） ---------- */
 
-    // 全ノードが収まる遠景へズームアウトする。座標が未確定（力学モデルが
-    // まだ動いていない）場合は何もしない（simulation 終了時に再試行される）。
-    function fitToContent() {
+    // 全ノードの描画範囲（ワールド座標）。中心座標だけでなく、円の半径と
+    // ラベルの実測幅を含めた「占有矩形」を集約する。ラベルは text-anchor: middle で
+    // 円の下にだけ出るため、上下で式が非対称になる。
+    // 座標未確定・ノード 0 件のときは null。
+    function contentBounds() {
       var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       nodes.forEach(function (n) {
         if (typeof n.x !== 'number' || typeof n.y !== 'number') return;
         if (!isFinite(n.x) || !isFinite(n.y)) return;
-        if (n.x < minX) minX = n.x;
-        if (n.x > maxX) maxX = n.x;
-        if (n.y < minY) minY = n.y;
-        if (n.y > maxY) maxY = n.y;
+        var r = nodeRadius(n);
+        if (typeof r !== 'number' || !isFinite(r) || r < 0) r = 0;
+        // ラベルが円より狭いときは円がはみ出すので、広い方を採る。
+        var halfW = Math.max(r, measureLabelWidth(n.label || n.id) / 2);
+        var left = n.x - halfW;
+        var right = n.x + halfW;
+        var top = n.y - r;
+        var bottom = n.y + r + LABEL_OFFSET + LABEL_DESCENT;
+        if (left < minX) minX = left;
+        if (right > maxX) maxX = right;
+        if (top < minY) minY = top;
+        if (bottom > maxY) maxY = bottom;
       });
-      if (!isFinite(minX) || !isFinite(minY)) return false;
+      if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) return null;
+      return { minX: minX, maxX: maxX, minY: minY, maxY: maxY };
+    }
 
-      var pad = 80;
-      var w = Math.max(maxX - minX, 1) + pad * 2;
-      var h = Math.max(maxY - minY, 1) + pad * 2;
-      var k = Math.min(window.innerWidth / w, window.innerHeight / h);
+    // オーバーレイ（#cv-info は左上・#cv-hint は左下に fixed）を避けた画面矩形（CSS px）。
+    // 左右はオーバーレイが画面幅を占めないため余白だけで扱う。
+    // 要素が無い場合も壊れないようにする（将来テンプレートから消えても安全）。
+    function overlayHeight(id) {
+      var el = document.getElementById(id);
+      if (!el) return 0;
+      var h = el.offsetHeight;
+      if (typeof h !== 'number' || !isFinite(h) || h < 0) return 0;
+      // 非表示（display:none）の要素は offsetHeight が 0 になるので自然に無視される。
+      return h;
+    }
 
-      // 俯瞰は必ず遠景（ノード + エッジ）で見せる。ズーム下限は scaleExtent に合わせる。
-      k = Math.max(0.1, Math.min(k, CARD_THRESHOLD - 0.05));
+    function usableViewport() {
+      var vw = window.innerWidth;
+      var vh = window.innerHeight;
+      var top = Math.max(FIT_PAD, overlayHeight('cv-info') + OVERLAY_INSET + FIT_GAP);
+      var hint = overlayHeight('cv-hint');
+      var bottom = Math.min(vh - FIT_PAD, vh - (hint + OVERLAY_INSET + FIT_GAP));
+      return { left: FIT_PAD, top: top, right: vw - FIT_PAD, bottom: bottom };
+    }
 
-      var tx = window.innerWidth / 2 - k * (minX + maxX) / 2;
-      var ty = window.innerHeight / 2 - k * (minY + maxY) / 2;
+    // 全ノードが収まる遠景へズームアウトする。座標が未確定（力学モデルが
+    // まだ動いていない）場合は何もしない（simulation 終了時に再試行される）。
+    function fitToContent() {
+      var b = contentBounds();
+      if (!b) return false; // 座標未確定・ノード 0 件。再試行に委ねる。
+
+      var vp = usableViewport();
+      var availW = vp.right - vp.left;
+      var availH = vp.bottom - vp.top;
+      if (availW <= 0 || availH <= 0) {
+        // ウィンドウが極端に小さい／オーバーレイが画面を埋めた。
+        // オーバーレイの控除をやめ、余白だけで確保し直す。
+        availW = window.innerWidth - FIT_PAD * 2;
+        availH = window.innerHeight - FIT_PAD * 2;
+        vp = {
+          left: FIT_PAD,
+          top: FIT_PAD,
+          right: window.innerWidth - FIT_PAD,
+          bottom: window.innerHeight - FIT_PAD,
+        };
+        if (availW <= 0 || availH <= 0) return false;
+      }
+
+      var w = Math.max(b.maxX - b.minX, 1);
+      var h = Math.max(b.maxY - b.minY, 1);
+      var k = Math.min(availW / w, availH / h);
+      if (typeof k !== 'number' || !isFinite(k) || k <= 0) return false; // 壊れた transform は適用しない
+
+      // 俯瞰は必ず遠景（ノード + エッジ）で見せる（上限側の丸め）。
+      k = Math.min(k, CARD_THRESHOLD - 0.05);
+      // 下限側は丸めない。必要な倍率までズーム下限そのものを下げる。
+      // 絶対下限より下は「収まらない」として頭打ちにし、情報バーに出す。
+      setNotFit(k < MIN_SCALE_HARD);
+      k = Math.max(MIN_SCALE_HARD, k);
+      // transform 自体はクランプされないが、この後のホイール操作は scaleExtent で
+      // クランプされる。下限を広げておかないと、次の 1 目盛りで俯瞰が跳ねる。
+      lowerMinScale(k);
+
+      // 画面中央ではなく「使える矩形の中央」に合わせる（オーバーレイの分だけ下/上へ寄る）。
+      var tx = (vp.left + vp.right) / 2 - k * (b.minX + b.maxX) / 2;
+      var ty = (vp.top + vp.bottom) / 2 - k * (b.minY + b.maxY) / 2;
       stageSel.call(zoomBehavior.transform, d3.zoomIdentity.translate(tx, ty).scale(k));
       return true;
     }
@@ -761,6 +1039,8 @@
         if (typeof x !== 'number' || !isFinite(x)) return;
         if (typeof y !== 'number' || !isFinite(y)) return;
         pendingFit = false;
+        k = clampRestoredScale(k);
+        lowerMinScale(k); // 保存された k が下限未満でも、次の操作で跳ねさせない
         stageSel.call(zoomBehavior.transform, d3.zoomIdentity.translate(x, y).scale(k));
       });
     };
@@ -775,8 +1055,10 @@
         pendingFit = false;
       }
     } else if (data.view && typeof data.view.k === 'number' && data.view.k > 0) {
+      var restoredK = clampRestoredScale(data.view.k);
+      lowerMinScale(restoredK);
       stageSel.call(zoomBehavior.transform,
-        d3.zoomIdentity.translate(data.view.x || 0, data.view.y || 0).scale(data.view.k));
+        d3.zoomIdentity.translate(data.view.x || 0, data.view.y || 0).scale(restoredK));
     } else {
       applyTransform();
       updateMode();
