@@ -65,6 +65,14 @@ jobs:
           pwsh -NoProfile -File tests/test-association-lib.ps1
           pwsh -NoProfile -File tests/test-association-flow.ps1
 
+      # 検証ハーネスは HIRAKE_DATA_ROOT で実利用のデータ領域から隔離される。
+      # ここが効かないまま回すと、ピン留め（ワークスペースに属さずアプリ全体で
+      # 共有される）がテストの配置で汚れ、切り分けは手作業になる。
+      # 隔離は CLI で完結する唯一の層なので、必須で確認する。
+      - name: データ領域の隔離（HIRAKE_DATA_ROOT）のテスト
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/test-apppaths-root.ps1
+
       # インストーラが呼ぶのは Windows PowerShell 5.1（powershell.exe）。
       # 5.1 は BOM の無い UTF-8 をロケールのコードページとして読むため、
       # 日本語コメントを含む配布スクリプトは BOM が無いと構文エラーになる。
@@ -84,6 +92,30 @@ jobs:
         run: |
           if (-not (Test-Path publish/Hirake.exe)) { throw 'publish/Hirake.exe がありません。' }
           if (-not (Test-Path publish/hostfxr.dll)) { throw 'hostfxr.dll がありません（自己完結で発行されていません）。' }
+
+      # キャンバス描画の回帰（ISSUE #89 / #90 / #93）。WebView2 を CDP で覗いて
+      # 判定する。ランナーの描画環境に左右されうるため、当面は必須チェックに
+      # 入れない（enforce-pr-source.yml の version-bumped と同じ扱い）。
+      # 安定して緑になったら continue-on-error を外し、必須化を判断する。
+      #
+      # 二重起動でパスが転送されるため、ハーネスは並列に走らせられない。
+      # このジョブ内で逐次に走る 1 ステップに閉じている。
+      - name: キャンバス検証ハーネス（CDP）
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -File tests\canvas\tools\New-DenseTestdata.ps1
+          pwsh -NoProfile -File tests\canvas\Invoke-CanvasHarness.ps1
+
+      - name: キャンバス検証ハーネスの証跡
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: canvas-harness-artifacts
+          path: tests/canvas/_artifacts/
+          if-no-files-found: ignore
+          retention-days: 3
 
       # windows-latest のランナーに Inno Setup は入っていない。
       # パッケージマネージャ経由ではなく公式の配布物を固定 URL で取得し、
