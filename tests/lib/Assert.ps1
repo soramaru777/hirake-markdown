@@ -1,28 +1,29 @@
 ﻿#requires -Version 5.1
 <#
 .SYNOPSIS
-    キャンバス検証ハーネスの assertion（ISSUE #94）。
+    検証ハーネス共通の assertion（ISSUE #94 / #96）。
 
 .DESCRIPTION
     tests/*.ps1 と同じ「1 行 1 assertion・成功/失敗を数える」書き方に揃える。
     落ちた行がそのまま ISSUE 番号に対応するよう、ラベルは短く具体的に書くこと。
+    キャンバス（CDP）とシェル（UI Automation）の両ハーネスが dot-source する。
 
-    集計はスクリプトスコープの $script:CanvasPassed / $script:CanvasFailed に持つ。
+    集計はスクリプトスコープの $script:HarnessPassed / $script:HarnessFailed に持つ。
     ケース側は Assert-Ok を呼ぶだけでよい。
 #>
 
 Set-StrictMode -Version Latest
 
-$script:CanvasPassed = 0
-$script:CanvasFailed = 0
+$script:HarnessPassed = 0
+$script:HarnessFailed = 0
 
-function Reset-CanvasAssertions {
-    $script:CanvasPassed = 0
-    $script:CanvasFailed = 0
+function Reset-HarnessAssertions {
+    $script:HarnessPassed = 0
+    $script:HarnessFailed = 0
 }
 
-function Get-CanvasPassedCount { return $script:CanvasPassed }
-function Get-CanvasFailedCount { return $script:CanvasFailed }
+function Get-HarnessPassedCount { return $script:HarnessPassed }
+function Get-HarnessFailedCount { return $script:HarnessFailed }
 
 function Assert-Ok {
     <#
@@ -38,12 +39,12 @@ function Assert-Ok {
 
     $suffix = if ($Detail) { " ($Detail)" } else { '' }
     if ($Condition -eq $true) {
-        $script:CanvasPassed++
+        $script:HarnessPassed++
         Write-Host ("        ok   {0}{1}" -f $Label, $suffix)
         return $true
     }
 
-    $script:CanvasFailed++
+    $script:HarnessFailed++
     Write-Host ("        NG   {0}{1}" -f $Label, $suffix)
     return $false
 }

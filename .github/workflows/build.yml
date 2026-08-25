@@ -117,6 +117,21 @@ jobs:
           if-no-files-found: ignore
           retention-days: 3
 
+      # WPF シェル側の回帰（ISSUE #86 のツールバー並び順・タブ操作・二重起動の
+      # パス転送）。UI Automation で見る。**描画順は UIA から見えない**ので、
+      # 重なり（#90）や SVG ノードの位置（#89）は上のキャンバスハーネスの担当。
+      #
+      # 二重起動判定は固定名の Mutex なので、キャンバスハーネスと並列に走らせると
+      # 片方が転送側になって死ぬ。この 2 つは同じジョブ内で逐次に走らせる。
+      #
+      # continue-on-error を外す条件: **PR 3 本ぶん連続で緑**になったら外す。
+      # 期限を切らずに置くと「赤くても通る手順」が既定になってしまうため、
+      # 判断の材料（何本見たら決めるか）を先に書いておく。
+      - name: シェル検証ハーネス（UI Automation）
+        continue-on-error: true
+        shell: pwsh
+        run: pwsh -NoProfile -File tests\shell\Invoke-ShellHarness.ps1
+
       # windows-latest のランナーに Inno Setup は入っていない。
       # パッケージマネージャ経由ではなく公式の配布物を固定 URL で取得し、
       # ハッシュを照合してから実行する。ここで実行されるのは、利用者が直接

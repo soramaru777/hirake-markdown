@@ -6,12 +6,14 @@ scope: shared
 sources:
   - tests/canvas/Invoke-CanvasHarness.ps1
   - https://github.com/soramaru777/hirake-markdown/issues/94
-related: [[hirake-canvas]] [[hirake-data-paths]] [[hirake-build]]
+related: [[hirake-canvas]] [[hirake-shell-harness]] [[hirake-data-paths]] [[hirake-build]]
 confidence: medium
-updated: 2026-08-25
+updated: 2026-08-26
 ---
 
 WebView2 の中で起きる描画（[[hirake-canvas]]）を、目視ではなくページ内の実測値で判定する仕組み。`tests/canvas/` にある。
+
+WebView2 の**外側**（ツールバー・タブ・二重起動）は UI Automation の担当で、[[hirake-shell-harness]] が対になる。隔離起動・前提チェック・assertion・CDP クライアントは共通層（`tests/lib/`）として両者で共有している。
 
 ## なぜ要るか
 
@@ -83,7 +85,7 @@ pwsh -NoProfile -File tests\canvas\Invoke-CanvasHarness.ps1 -Case 89   # 1 本�
 |---|---|
 | 非表示タブ（`Visibility=Collapsed`）は `setTimeout` がスロットリングされる | デバウンス 300ms を見込んで 2.5 秒待つ。評価は選択中（＝可視）のタブに限る |
 | 非表示タブへの `Page.captureScreenshot` はハングする | 撮影は失敗時だけ・可視タブだけ。成功時は撮らない |
-| 二重起動でパスが転送される | 起動前に既存プロセスを検出して中止。並列実行も不可 |
+| 二重起動でパスが転送される | 起動前に既存プロセスを検出して中止。並列実行も不可（[[hirake-shell-harness]] と同時には走らせられない） |
 | ポートの取り違え | 起動前に `Listen` を確認する。`TIME_WAIT` の残骸は使用中と数えない |
 
 ## 開いている口について

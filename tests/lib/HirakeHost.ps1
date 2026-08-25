@@ -1,7 +1,7 @@
 ﻿#requires -Version 5.1
 <#
 .SYNOPSIS
-    Hirake をデータ領域ごと隔離して起動し、CDP のターゲットまで面倒を見る（ISSUE #94）。
+    Hirake をデータ領域ごと隔離して起動し、CDP のターゲットまで面倒を見る（ISSUE #94 / #96）。
 
 .DESCRIPTION
     このハーネスで一番危険なのは「実利用のデータを汚すこと」。ピン留め（canvas）は
@@ -29,7 +29,7 @@ function Resolve-HirakeExe {
     [CmdletBinding()]
     param([string]$RepoRoot)
 
-    if (-not $RepoRoot) { $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path }
+    if (-not $RepoRoot) { $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path }
 
     $publish = Join-Path $RepoRoot 'publish\Hirake.exe'
     if (Test-Path -LiteralPath $publish -PathType Leaf) { return $publish }
@@ -178,7 +178,7 @@ function Test-PortInUse {
     }
 }
 
-function Test-CanvasHarnessPrecondition {
+function Test-HirakeHarnessPrecondition {
     <#
     .SYNOPSIS
         起動前に満たすべき条件を確認する。満たさないときは理由の文字列を返す。
@@ -387,17 +387,34 @@ function Stop-HirakeHost {
     <#
     .SYNOPSIS
         プロセスを終了し、隔離したデータ領域を消す。finally から呼ぶ。
+    .DESCRIPTION
+        **落としきれなかったときは投げる。** 黙って戻ると、最後のケースで失敗したときに
+        「Hirake を残したまま passed: N / failed: 0」で終わってしまう。途中のケースなら
+        次のケースの前提チェックが拾うが、最後の 1 回は誰も見ない。
+
+        投げるのは**プロセスが残った場合だけ**。ポートの未解放と一時領域の削除失敗は
+        警告に留める。どちらも次の実行の前提チェックが起動前に捕まえる（ポートは
+        Test-HirakeHarnessPrecondition、一時領域は毎回別の GUID を使う）のに対し、
+        生きた Hirake が 1 つ残ることだけは固定名 Mutex を握り続け、以降のすべてを
+        黙って狂わせるため。
     #>
     [CmdletBinding()]
     param([AllowNull()]$HostInfo)
 
     if ($null -eq $HostInfo) { return }
 
-    if ($HostInfo.Process -and -not $HostInfo.Process.HasExited) {
+    $stray = $null
+    if ($HostInfo.Process -and -not (Test-ProcessExited -Process $HostInfo.Process)) {
         try { $HostInfo.Process.CloseMainWindow() | Out-Null } catch { }
-        if (-not $HostInfo.Process.WaitForExit(5000)) {
+        $exited = $false
+        try { $exited = $HostInfo.Process.WaitForExit(5000) } catch { }
+        if (-not $exited) {
             try { $HostInfo.Process.Kill() } catch { }
             try { $HostInfo.Process.WaitForExit(5000) | Out-Null } catch { }
+        }
+        if (-not (Test-ProcessExited -Process $HostInfo.Process)) {
+            # 残っていても、ポートと一時領域の後始末は最後までやってから投げる。
+            $stray = $HostInfo.Process
         }
     }
 
@@ -431,6 +448,144 @@ function Stop-HirakeHost {
             Write-Warning "一時データ領域を削除できませんでした: $($HostInfo.DataRoot)"
         }
     }
+
+    if ($stray) {
+        $id = try { $stray.Id } catch { '不明' }
+        throw ("Hirake のプロセスを終了できませんでした（PID {0}）。残ったままでは以降の起動がすべて二重起動になり、静かに誤判定します。" -f $id)
+    }
+}
+
+function Start-HirakeSecondInstance {
+    <#
+    .SYNOPSIS
+        2 番目のプロセスを「同じ」隔離領域で起動し、終了するまで待つ（ISSUE #96）。
+    .DESCRIPTION
+        SingleInstanceManager は固定名の Mutex（Hirake_SingleInstance_Mutex）で初回を
+        判定するため、HIRAKE_DATA_ROOT を変えても 2 番目は転送側になる。転送側は
+        MainWindow を作らずに終了するが、終了時に設定を書き出すので、**1 番目と同じ
+        隔離領域**を渡す。別の一時領域を作らせると後始末が増えるだけで得が無い。
+
+        リモートデバッグポートは渡さない。転送側は WebView2 を作らないうえ、
+        同じポートを 2 プロセスで要求すると 1 番目の接続先が揺れる。
+
+        **起動した後は、どの経路を通っても必ず始末する。** 2 番目が残ると、固定名の
+        Mutex のせいで以降のケースがすべて「2 番目のインスタンス」になり、起動が
+        別プロセスへ吸われたまま静かに誤判定する。始末しきれなければ黙って進まず投げる。
+    .OUTPUTS
+        @{ Exited = $true/$false; ExitCode = <int?>; Process = <Process> }
+        Exited が $false なら「転送されずに居座った」＝ こちらで kill 済み。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$HostInfo,
+        [Parameter(Mandatory)][string]$OpenFile,
+        [int]$TimeoutSec = 15
+    )
+
+    if (-not (Test-Path -LiteralPath $OpenFile -PathType Leaf)) {
+        throw "開くファイルが見つかりません: $OpenFile"
+    }
+
+    $savedDataRoot = $env:HIRAKE_DATA_ROOT
+    $process = $null
+    try {
+        $env:HIRAKE_DATA_ROOT = $HostInfo.DataRoot
+        $process = Start-Process -FilePath $HostInfo.ExePath -ArgumentList ('"{0}"' -f $OpenFile) -PassThru
+    } finally {
+        # 子プロセスへ渡すためだけに触る。自プロセスには残さない。
+        if ($null -eq $savedDataRoot) {
+            if (Test-Path Env:\HIRAKE_DATA_ROOT) { Remove-Item Env:\HIRAKE_DATA_ROOT }
+        } else {
+            $env:HIRAKE_DATA_ROOT = $savedDataRoot
+        }
+    }
+
+    $exited = $false
+    try {
+        $exited = $process.WaitForExit($TimeoutSec * 1000)
+    } catch {
+        # 待ちきれなかった理由に関わらず、起動した以上は始末してから投げ直す。
+        # 始末にも失敗したら、そちらの方が重い（残ると以降が全部二重起動になる）ので
+        # 両方の理由を 1 つの例外にまとめて投げる。
+        $waitError = $_
+        try {
+            Stop-StrayProcess -Process $process
+        } catch {
+            throw ("2 番目の Hirake の終了待ちに失敗し、後始末もできませんでした。待ち: {0} / 後始末: {1}" `
+                    -f $waitError.Exception.Message, $_.Exception.Message)
+        }
+        throw $waitError
+    }
+
+    if ($exited) {
+        return [pscustomobject]@{ Exited = $true; ExitCode = $process.ExitCode; Process = $process }
+    }
+
+    # 居座った（1 番目が死んでいる等）。kill する。落としきれなければ
+    # Stop-StrayProcess 自身が投げるので、ここでの確認は要らない。
+    Stop-StrayProcess -Process $process
+
+    return [pscustomobject]@{ Exited = $false; ExitCode = $null; Process = $process }
+}
+
+function Test-ProcessExited {
+    <#
+    .SYNOPSIS
+        プロセスが終了しているかを返す。判定できない場合は $false（安全側）。
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowNull()]$Process)
+
+    if ($null -eq $Process) { return $true }
+    try { return [bool]$Process.HasExited } catch { return $false }
+}
+
+function Stop-StrayProcess {
+    <#
+    .SYNOPSIS
+        起動してしまったプロセスを確実に落とす（残すと二重起動の判定を狂わせる）。
+    .DESCRIPTION
+        **落とせたことの確認までがこの関数の責務。** 呼び出し側に確認を任せると、
+        経路が増えたときに片方だけ抜ける。落としきれなければ投げて実行を止める。
+        Hirake が 1 つ残るだけで、以降のケースはすべて「2 番目のインスタンス」になり、
+        起動が別プロセスへ吸われたまま静かに誤判定するため。
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowNull()]$Process)
+
+    if (Test-ProcessExited -Process $Process) { return }
+    try { $Process.Kill() } catch { }
+    try { $Process.WaitForExit(5000) | Out-Null } catch { }
+
+    if (Test-ProcessExited -Process $Process) { return }
+
+    $id = try { $Process.Id } catch { '不明' }
+    throw ("起動したプロセスを終了できませんでした（PID {0}）。二重起動の判定が狂うため中断します。" -f $id)
+}
+
+function Wait-HirakeMainWindow {
+    <#
+    .SYNOPSIS
+        起動した Hirake のメインウィンドウを UI Automation で掴めるまで待つ（ISSUE #96）。
+    .DESCRIPTION
+        起動と後始末を持つこのファイルに置いてあるのは、これが「起動が完了したか」の
+        判定だから。UIA そのものの操作は tests/shell/lib/Uia.ps1 が持つ。
+        共通層が shell 側のファイルに暗黙で依存しないよう、未読込なら理由を出して落とす。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]$HostInfo,
+        [int]$TimeoutSec = 30
+    )
+
+    if (-not (Get-Command -Name 'Wait-UiaWindow' -ErrorAction SilentlyContinue)) {
+        throw 'Wait-HirakeMainWindow には tests\shell\lib\Uia.ps1 が必要です（dot-source してください）。'
+    }
+    if ($HostInfo.Process.HasExited) {
+        throw "Hirake が終了しています（終了コード $($HostInfo.Process.ExitCode)）。"
+    }
+
+    return Wait-UiaWindow -ProcessId $HostInfo.Process.Id -TimeoutSec $TimeoutSec
 }
 
 function Open-CanvasOverview {

@@ -44,9 +44,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-. (Join-Path $PSScriptRoot 'lib\Assert.ps1')
-. (Join-Path $PSScriptRoot 'lib\Cdp.ps1')
-. (Join-Path $PSScriptRoot 'lib\HirakeHost.ps1')
+. (Join-Path $PSScriptRoot '..\lib\Assert.ps1')
+. (Join-Path $PSScriptRoot '..\lib\Cdp.ps1')
+. (Join-Path $PSScriptRoot '..\lib\HirakeHost.ps1')
 . (Join-Path $PSScriptRoot 'lib\CanvasEval.ps1')
 . (Join-Path $PSScriptRoot 'cases\Case-89-FitToContent.ps1')
 . (Join-Path $PSScriptRoot 'cases\Case-90-CardStacking.ps1')
@@ -101,7 +101,7 @@ if (-not (Test-HirakeSupportsDataRoot -ExePath $ExePath)) {
     exit 2
 }
 
-$problem = Test-CanvasHarnessPrecondition -Port $Port
+$problem = Test-HirakeHarnessPrecondition -Port $Port
 if ($problem) {
     Write-Host ''
     Write-Host "  中止: $problem"
@@ -139,7 +139,7 @@ foreach ($c in $targets) {
     try {
         # 前のケースの後始末が終わっていないまま次を起動すると、古い CDP ターゲットへ
         # 繋いで「通ったように見える」誤判定になる。ケースごとに前提を見直す。
-        $problem = Test-CanvasHarnessPrecondition -Port $Port
+        $problem = Test-HirakeHarnessPrecondition -Port $Port
         if ($problem) { throw "前提が崩れました: $problem" }
 
         $hostInfo = Start-HirakeHost -ExePath $ExePath -OpenFile $entryFile -Port $Port
@@ -170,16 +170,23 @@ foreach ($c in $targets) {
     } finally {
         if ($docTarget) { Disconnect-Cdp -Session $docTarget.Session }
         if ($canvasTarget) { Disconnect-Cdp -Session $canvasTarget.Session }
-        Stop-HirakeHost -HostInfo $hostInfo
-        if ($hostInfo -and -not (Test-Path -LiteralPath $hostInfo.DataRoot)) {
-            Write-Host ("        cleanup   : removed {0}" -f $hostInfo.DataRoot)
+        try {
+            Stop-HirakeHost -HostInfo $hostInfo
+            if ($hostInfo -and -not (Test-Path -LiteralPath $hostInfo.DataRoot)) {
+                Write-Host ("        cleanup   : removed {0}" -f $hostInfo.DataRoot)
+            }
+        } catch {
+            # 後始末の失敗も失敗として数える。ここを黙って通すと、Hirake を残したまま
+            # 「全部成功」で終わる（最後のケースでは次の前提チェックも走らない）。
+            $caseFailures++
+            Write-Host ("        NG   後始末に失敗: {0}" -f $_.Exception.Message)
         }
     }
 }
 
 $stopwatch.Stop()
-$passed = Get-CanvasPassedCount
-$failed = Get-CanvasFailedCount
+$passed = Get-HarnessPassedCount
+$failed = Get-HarnessFailedCount
 
 Write-Host ''
 Write-Host ("  passed: {0}  failed: {1}   ({2:F1}s)" -f $passed, $failed, $stopwatch.Elapsed.TotalSeconds)
