@@ -1,0 +1,4 @@
+# dense500 は 500 ファイルの生成物。履歴に載せると 1 ファイル 1KB でも
+# 約 500KB がコミットに残り、git status や grep の雑音にもなる。
+# 実行時に tools/New-DenseTestdata.ps1 で作る。
+dense500/
