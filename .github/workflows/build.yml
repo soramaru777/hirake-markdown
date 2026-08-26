@@ -73,6 +73,14 @@ jobs:
         shell: pwsh
         run: pwsh -NoProfile -File tests/test-apppaths-root.ps1
 
+      # 隔離が効くかどうかは「起動する前に、その exe が HIRAKE_DATA_ROOT を知って
+      # いるか」を見分けられるかに掛かっている。以前はここにサイズの推定が混じって
+      # いた（ISSUE #100）。いまは束ねヘッダの位置で発行形態を確定させる。
+      # これも CLI で完結するので必須で確認する。
+      - name: 起動前ゲート（発行形態の判定）のテスト
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/test-supportsdataroot.ps1
+
       # インストーラが呼ぶのは Windows PowerShell 5.1（powershell.exe）。
       # 5.1 は BOM の無い UTF-8 をロケールのコードページとして読むため、
       # 日本語コメントを含む配布スクリプトは BOM が無いと構文エラーになる。

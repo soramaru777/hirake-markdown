@@ -105,9 +105,11 @@ try {
 
 # 起動する前に「その exe が隔離を知っているか」を確かめる。知らないバイナリは
 # 起動した瞬間に実利用の %LocalAppData%\Hirake を作りに行くため、後追いでは遅い（#94）。
-if (-not (Test-HirakeSupportsDataRoot -ExePath $ExePath)) {
+$gateReason = ''
+if (-not (Test-HirakeSupportsDataRoot -ExePath $ExePath -Reason ([ref]$gateReason))) {
     Write-Host ''
     Write-Host '  中止: この Hirake.exe は HIRAKE_DATA_ROOT を知りません（#94 より前のバイナリ）。'
+    if ($gateReason) { Write-Host ("        理由: {0}" -f $gateReason) }
     Write-Host '        起動すると実利用のデータ領域を使ってしまうため、発行し直してください:'
     Write-Host '          dotnet publish src/Hirake -c Release -r win-x64 --self-contained false -o publish'
     exit 2

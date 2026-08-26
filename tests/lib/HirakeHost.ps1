@@ -51,36 +51,45 @@ function Test-HirakeRunning {
     return [bool](Get-Process -Name 'Hirake' -ErrorAction SilentlyContinue)
 }
 
-function Test-BinaryContainsMarker {
+function Find-BinaryNeedleOffset {
     <#
     .SYNOPSIS
-        バイナリの中に文字列が焼き込まれているかを見る（定数メモリ）。
+        バイナリの中から needle を探し、先頭からの位置を返す（定数メモリ）。
     .DESCRIPTION
-        .NET の文字列リテラルはメタデータへ UTF-16LE で入る。ここでは
-        「UTF-16LE のバイト列」と「そのままのバイト列」の 2 つを**バイト列として**探す。
-        バイト列で探すので、2 バイト境界のずれを気にする必要がない。
-
         照合は Latin-1（ISO-8859-1）で 1 バイト = 1 文字へ写してから String.IndexOf に
         任せる。Latin-1 は 0..255 を無損失で往復できるので、バイト列の探索を
         そのまま文字列探索に置き換えられる。自前のバイト比較ループより桁違いに速い。
+        比較は必ず Ordinal（バイト列を文字として比べるので、カルチャ依存では困る）。
 
         読みは 1MB ずつで、境界をまたぐ一致を落とさないよう末尾を持ち越す。
         自己完結・単一ファイル発行の大きな exe でもメモリは一定に保つ。
+
+        **真偽ではなく位置を返す。** bundle header offset のように「見つけた場所の
+        手前」を読む用途があるため（→ Get-DotnetBundleHeaderOffset）。
+    .PARAMETER Needles
+        Latin-1 へ写し済みの探索文字列。どれか 1 つでも当たれば、その中で
+        最も手前の位置を返す。
+    .OUTPUTS
+        最初に一致した位置（0 起点）。見つからなければ -1。
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$Path,
-        [Parameter(Mandatory)][string]$Marker
+        [Parameter(Mandatory)][string[]]$Needles
     )
 
     $latin1 = [System.Text.Encoding]::GetEncoding(28591)
-    $needleUtf16 = $latin1.GetString([System.Text.Encoding]::Unicode.GetBytes($Marker))
-    $needlePlain = $latin1.GetString($latin1.GetBytes($Marker))
-    $overlap = [Math]::Max($needleUtf16.Length, $needlePlain.Length) - 1
+
+    $overlap = 0
+    foreach ($needle in $Needles) {
+        if ($needle.Length -gt $overlap) { $overlap = $needle.Length }
+    }
+    $overlap = [Math]::Max(0, $overlap - 1)
 
     $chunk = 1MB
     $buffer = New-Object byte[] ($chunk + $overlap)
     $carry = 0
+    [long]$windowStart = 0   # buffer[0] がファイルの何バイト目か
 
     $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open,
         [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
@@ -91,18 +100,125 @@ function Test-BinaryContainsMarker {
 
             $length = $carry + $read
             $text = $latin1.GetString($buffer, 0, $length)
-            if ($text.Contains($needleUtf16) -or $text.Contains($needlePlain)) { return $true }
+
+            $best = -1
+            foreach ($needle in $Needles) {
+                $index = $text.IndexOf($needle, [System.StringComparison]::Ordinal)
+                if ($index -ge 0 -and ($best -lt 0 -or $index -lt $best)) { $best = $index }
+            }
+            if ($best -ge 0) { return ($windowStart + $best) }
 
             $carry = [Math]::Min($overlap, $length)
             if ($carry -gt 0) {
                 [Array]::Copy($buffer, $length - $carry, $buffer, 0, $carry)
             }
+            $windowStart += ($length - $carry)
         }
     } finally {
         $stream.Dispose()
     }
 
-    return $false
+    return -1
+}
+
+function Find-BinaryMarkerOffset {
+    <#
+    .SYNOPSIS
+        文字列マーカーの位置を返す。UTF-16LE と素のバイト列の両方で探す。
+    .DESCRIPTION
+        .NET の文字列リテラルはメタデータへ UTF-16LE で入るが、ネイティブ側に
+        素で埋まることもある。どちらでも拾えるように 2 通りで探す。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Marker
+    )
+
+    $latin1 = [System.Text.Encoding]::GetEncoding(28591)
+    $needles = @(
+        $latin1.GetString([System.Text.Encoding]::Unicode.GetBytes($Marker))
+        $latin1.GetString($latin1.GetBytes($Marker))
+    )
+    return (Find-BinaryNeedleOffset -Path $Path -Needles $needles)
+}
+
+function Find-BinaryBytesOffset {
+    <#
+    .SYNOPSIS
+        バイト列をそのまま探して位置を返す（signature のような非テキスト用）。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][byte[]]$Bytes
+    )
+
+    $latin1 = [System.Text.Encoding]::GetEncoding(28591)
+    return (Find-BinaryNeedleOffset -Path $Path -Needles @($latin1.GetString($Bytes)))
+}
+
+function Test-BinaryContainsMarker {
+    <#
+    .SYNOPSIS
+        バイナリの中に文字列が焼き込まれているかを見る。
+    .DESCRIPTION
+        Find-BinaryMarkerOffset の薄い包み。真偽だけが要る呼び出しのために残す。
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Marker
+    )
+
+    return ((Find-BinaryMarkerOffset -Path $Path -Marker $Marker) -ge 0)
+}
+
+# Microsoft.NET.HostModel が apphost に埋め込む 32 バイトの目印（BundleSignature）。
+# **通常の apphost にも入っている**ので、有無では発行形態を区別できない。
+# 単一ファイル発行の束ね処理が書き込むのは、この**直前 8 バイト**（int64）の方。
+#   0    = 束ねていない（起動役の apphost。中身は隣の Hirake.dll）
+#   非 0 = 単一ファイル（その位置に束ねヘッダがある。exe が中身そのもの）
+# 実測（このリポジトリの publish）: apphost=0 / 単一ファイル=28679671（signature は
+# どちらも同じオフセット 151360 にある）。
+$script:DotnetBundleSignature = [byte[]]@(
+    0x8b, 0x12, 0x02, 0xb9, 0x6a, 0x61, 0x20, 0x38, 0x72, 0x7b, 0x93, 0x02, 0x14, 0xd7, 0xa0, 0x32,
+    0x13, 0xf5, 0xb9, 0xe6, 0xef, 0xae, 0x33, 0x18, 0xee, 0x3b, 0x2d, 0xce, 0x24, 0xb3, 0x6a, 0xae)
+
+function Get-DotnetBundleHeaderOffset {
+    <#
+    .SYNOPSIS
+        exe の発行形態を、束ねヘッダの位置（int64）で判定する。
+    .OUTPUTS
+        0     … 束ねていない（apphost）
+        正の値 … 単一ファイル発行（束ねヘッダの位置）
+        $null … signature が見つからない、または直前 8 バイトを読めない
+                （.NET のホストとして読めなかった、の意味）
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+
+    $signatureOffset = Find-BinaryBytesOffset -Path $Path -Bytes $script:DotnetBundleSignature
+    if ($signatureOffset -lt 8) { return $null }   # -1（不在）もここで落ちる
+
+    $buffer = New-Object byte[] 8
+    $stream = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+    try {
+        $stream.Seek(($signatureOffset - 8), [System.IO.SeekOrigin]::Begin) | Out-Null
+        $total = 0
+        while ($total -lt 8) {
+            $read = $stream.Read($buffer, $total, 8 - $total)
+            if ($read -le 0) { break }
+            $total += $read
+        }
+        if ($total -lt 8) { return $null }
+    } finally {
+        $stream.Dispose()
+    }
+
+    # 束ね処理はリトルエンディアンで書く。Windows x64 は同じなのでそのまま読める。
+    return [System.BitConverter]::ToInt64($buffer, 0)
 }
 
 function Test-HirakeSupportsDataRoot {
@@ -116,36 +232,73 @@ function Test-HirakeSupportsDataRoot {
 
         判定は「AppPaths が持つ環境変数名の文字列が焼き込まれているか」で行う。
         製品側にテスト専用の版番号や口を足さずに済む。
+
+        exe 自身が持っていない場合、その exe が
+          (a) 起動役だけの apphost（中身は隣の Hirake.dll）
+          (b) HIRAKE_DATA_ROOT を知らない単一ファイル発行物
+        のどちらかを決める必要がある。**以前はサイズで推定していたが（4MB 以下なら
+        apphost と見なす）、これは推定でしかなかった**（ISSUE #100）。
+        いまは束ねヘッダの位置を読んで確定させる（→ Get-DotnetBundleHeaderOffset）。
+
+        判定は下記の順で、**言い切れないものは通さない**（False 側にしか倒れない）。
+    .PARAMETER Reason
+        False になった理由を受け取る [ref]。省略可（呼び出し側が使わなければ不要）。
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$ExePath,
-        # 起動役（apphost）と見なす上限。実測で 150KB 前後。単一ファイル発行は
-        # アプリと依存を丸ごと抱えるので桁が違う。
-        [long]$ApphostMaxBytes = 4MB
+        [ref]$Reason
     )
 
     $marker = 'HIRAKE_DATA_ROOT'
+    $result = $false
+    $reasonText = ''
 
-    # 1) exe 自身が持っていれば、それが走る中身。単一ファイル発行はここで通る。
-    if (Test-BinaryContainsMarker -Path $ExePath -Marker $marker) { return $true }
+    do {
+        # 1) exe 自身が持っていれば、それが走る中身。単一ファイル発行はここで通る。
+        if (Test-BinaryContainsMarker -Path $ExePath -Marker $marker) {
+            $result = $true
+            break
+        }
 
-    # 2) exe が持っていない。ここから先は
-    #      (a) 起動役だけの apphost（中身は隣の Hirake.dll）
-    #      (b) HIRAKE_DATA_ROOT を知らない古い単一ファイル発行物
-    #    のどちらか。取り違えると (b) を起動してしまうので、
-    #    「apphost だと言い切れないなら通さない」側へ倒す。
-    #
-    #    隣にファイルが在るかどうかでは (a) と (b) を区別できない
-    #    （古い exe の隣に新しい publish の dll が残っている配置があり得る）。
-    #    大きさは中身の有無を直接反映するので、こちらを根拠にする。
-    $info = Get-Item -LiteralPath $ExePath -ErrorAction SilentlyContinue
-    if (-not $info -or $info.Length -gt $ApphostMaxBytes) { return $false }
+        # 2) 発行形態を確定させる。読めなければ通さない。
+        $bundleOffset = Get-DotnetBundleHeaderOffset -Path $ExePath
+        if ($null -eq $bundleOffset) {
+            $reasonText = '.NET ホストの目印（bundle signature）が見つかりません'
+            break
+        }
 
-    $dll = Join-Path (Split-Path -Parent $ExePath) 'Hirake.dll'
-    if (-not (Test-Path -LiteralPath $dll -PathType Leaf)) { return $false }
+        # 3) 値の妥当性。ファイル内の位置なので、負や範囲外なら壊れている。
+        $info = Get-Item -LiteralPath $ExePath -ErrorAction SilentlyContinue
+        $size = if ($info) { $info.Length } else { 0 }
+        if ($bundleOffset -lt 0 -or $bundleOffset -ge $size) {
+            $reasonText = ("bundle header の位置が不正です（値 {0} / サイズ {1}）" -f $bundleOffset, $size)
+            break
+        }
 
-    return (Test-BinaryContainsMarker -Path $dll -Marker $marker)
+        # 4) 非 0 = 単一ファイル。exe が中身そのものなのに 1) で当たらなかった
+        #    ＝ HIRAKE_DATA_ROOT を知らない古いバイナリ。**サイズは見ない。**
+        if ($bundleOffset -gt 0) {
+            $reasonText = '単一ファイル発行の exe ですが、中に HIRAKE_DATA_ROOT がありません'
+            break
+        }
+
+        # 5) 0 = 起動役（apphost）。中身は隣の Hirake.dll にある。
+        $dll = Join-Path (Split-Path -Parent $ExePath) 'Hirake.dll'
+        if (-not (Test-Path -LiteralPath $dll -PathType Leaf)) {
+            $reasonText = '起動役（apphost）ですが、隣に Hirake.dll がありません'
+            break
+        }
+        if (-not (Test-BinaryContainsMarker -Path $dll -Marker $marker)) {
+            $reasonText = '隣の Hirake.dll が HIRAKE_DATA_ROOT を知りません'
+            break
+        }
+
+        $result = $true
+    } while ($false)
+
+    if ($Reason) { $Reason.Value = $reasonText }
+    return $result
 }
 
 function Test-PortInUse {
