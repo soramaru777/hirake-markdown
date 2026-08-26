@@ -6,6 +6,7 @@ scope: shared
 sources:
   - tests/canvas/Invoke-CanvasHarness.ps1
   - https://github.com/soramaru777/hirake-markdown/issues/94
+  - https://github.com/soramaru777/hirake-markdown/issues/100
 related: [[hirake-canvas]] [[hirake-shell-harness]] [[hirake-data-paths]] [[hirake-build]]
 confidence: medium
 updated: 2026-08-26
@@ -72,12 +73,21 @@ pwsh -NoProfile -File tests\canvas\Invoke-CanvasHarness.ps1 -Case 89   # 1 本�
 2 が見るのは「実際に走る中身」。判定はこの順で、**言い切れないものは通さない**。
 
 1. exe 自身にマーカーがある → それが走る中身（単一ファイル発行はここで通る）
-2. 無くて、exe が 4MB を超える → 起動役（apphost）と言い切れない。**通さない**
-3. 無くて、exe が小さい → 起動役と見なし、隣の `Hirake.dll` を見る
+2. 無ければ**発行形態を確定させる**。`.NET` の apphost には 32 バイトの `BundleSignature` が埋まっており、単一ファイル発行の束ね処理は**その直前 8 バイト（int64）に束ねヘッダの位置を書き込む**
+   - `0` → 束ねていない = 起動役（apphost）。中身は隣の `Hirake.dll`
+   - 非 `0` → 単一ファイル。exe が中身そのものなのに 1 で当たらなかった ⇒ 古いバイナリなので**通さない**
+   - signature が無い / 値がファイルサイズを超える → 読めないので**通さない**
+3. `0`（apphost）のときだけ、隣の `Hirake.dll` のマーカーを見る
+
+**signature の「有無」では区別できない。** 通常の apphost にも同じ位置に入っている（実測: apphost も単一ファイルも offset 151360）。違うのは書き込まれた値の方で、実測は apphost = `0` / 単一ファイル = `28679671`。
+
+> 2026-08-26 まで: ここは**サイズの推定**だった（マーカーが無くて 4MB 以下なら apphost と見なす）。`PublishSingleFile=true` + `SelfContained=false` で 4MB 以下の単一ファイル exe を作れる以上、言い切れていなかった（ISSUE #100 で廃止）。回帰は `tests/test-supportsdataroot.ps1` が固定している。
 
 隣にどのファイルが在るかは根拠にしない。`dotnet publish` は出力先を空にしないので、**古い exe の隣に新しい publish の `Hirake.dll` と `runtimeconfig.json` が残る**配置があり得る。それを「apphost だ」と読むと、実際に走る古い exe を見ないまま通してしまう。
 
 3 は環境変数の受け渡しが崩れた場合などに備えた網で、「効かないまま検証を続けない」ことを担保する。使った exe とその更新日時も毎回表示する。
+
+2 で弾いたときは、**どの段で弾いたかを「理由:」の 1 行で出す**（単一ファイルなのにマーカーが無い / signature が読めない / 隣に dll が無い、など）。
 
 ## 既知の罠
 
