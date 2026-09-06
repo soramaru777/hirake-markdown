@@ -218,3 +218,10 @@
     apphost=0 / 単一ファイル=28679671
   - 旧記述は「> 2026-08-26 まで: …」の形で残した。次に読む人が「なぜサイズを見ていたのか」
     ではなく「なぜサイズをやめたのか」を追えるようにするため
+
+2026-09-06 update — ISSUE #105（テーマ切替で mermaid 図が再描画されない）の実装に合わせて更新。
+  - 新規 `hirake-viewer-harness.md`。文書タブ（viewer.js）側の CDP ケースは canvas / shell のどちらにも収まらないため
+  - 更新 `hirake-viewer-features.md`（mermaid の描画経路と、2026-09-06 までの不具合を「> まで:」で残す）、
+    `hirake-canvas-harness.md`（viewer-harness への相互リンク、既知の罠に pwsh 7.6 の VoidTaskResult 問題を追加）、`index.md`
+  - 判断: **Hirake 実機でのハーネス実走は未実施**（実装時に Hirake が起動中で二重起動の制約に掛かった）。
+    代わりに同じ DOM 形を headless Edge に載せて修正前 FAIL / 修正後 PASS を確認した。viewer-harness は confidence: medium のまま

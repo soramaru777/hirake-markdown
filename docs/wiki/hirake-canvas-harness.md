@@ -7,14 +7,15 @@ sources:
   - tests/canvas/Invoke-CanvasHarness.ps1
   - https://github.com/soramaru777/hirake-markdown/issues/94
   - https://github.com/soramaru777/hirake-markdown/issues/100
-related: [[hirake-canvas]] [[hirake-shell-harness]] [[hirake-data-paths]] [[hirake-build]]
+  - https://github.com/soramaru777/hirake-markdown/issues/105
+related: [[hirake-canvas]] [[hirake-shell-harness]] [[hirake-viewer-harness]] [[hirake-data-paths]] [[hirake-build]]
 confidence: medium
-updated: 2026-08-26
+updated: 2026-09-06
 ---
 
 WebView2 の中で起きる描画（[[hirake-canvas]]）を、目視ではなくページ内の実測値で判定する仕組み。`tests/canvas/` にある。
 
-WebView2 の**外側**（ツールバー・タブ・二重起動）は UI Automation の担当で、[[hirake-shell-harness]] が対になる。隔離起動・前提チェック・assertion・CDP クライアントは共通層（`tests/lib/`）として両者で共有している。
+WebView2 の**外側**（ツールバー・タブ・二重起動）は UI Automation の担当で、[[hirake-shell-harness]] が対になる。通常の文書タブ（`viewer.js` の描画）は [[hirake-viewer-harness]] の担当。隔離起動・前提チェック・assertion・CDP クライアントは共通層（`tests/lib/`）として 3 つで共有している。
 
 ## なぜ要るか
 
@@ -97,6 +98,7 @@ pwsh -NoProfile -File tests\canvas\Invoke-CanvasHarness.ps1 -Case 89   # 1 本�
 | 非表示タブへの `Page.captureScreenshot` はハングする | 撮影は失敗時だけ・可視タブだけ。成功時は撮らない |
 | 二重起動でパスが転送される | 起動前に既存プロセスを検出して中止。並列実行も不可（[[hirake-shell-harness]] と同時には走らせられない） |
 | ポートの取り違え | 起動前に `Listen` を確認する。`TIME_WAIT` の残骸は使用中と数えない |
+| pwsh 7.6 では `Task.GetAwaiter().GetResult()` が `VoidTaskResult` をパイプラインに流す | `Connect-Cdp` の戻り値が `[VoidTaskResult, session]` の配列になり、`NextId` が見つからず全ケースが接続失敗する。`tests/lib/Cdp.ps1` の void 戻り 3 箇所（Connect / Close / Send）に `[void]` を付けて塞いだ（#105 で発見。pwsh 7.4 以前では出ない） |
 
 ## 開いている口について
 

@@ -5,6 +5,8 @@
  *   - 目次サイドバーの生成・開閉・現在地ハイライト
  *   - ページ内検索（Ctrl+F）
  *   - シンタックスハイライト（hljs）・Mermaid 図・KaTeX 数式の描画
+ *     （Mermaid は Markdig Diagrams 拡張の <pre class="mermaid"> 形と、通常コードブロックの
+ *       <pre><code class="language-mermaid"> 形の両方を受理する。ISSUE #105）
  *   - 文書内 #アンカーのジャンプ制御（本文リンク / Mermaid click 記法の両方）
  *   - ライト／ダークテーマ切替（hljs CSS 切替 + Mermaid 再描画）
  *   - スクロール位置のホストへの通知（デバウンス）と復元
@@ -631,26 +633,68 @@
     }
   }
 
+  // Markdig が mermaid ブロックを出す形は 2 つある（ISSUE #105）:
+  //   形 A: <pre><code class="language-mermaid">  通常のコードブロックレンダラ
+  //   形 B: <pre class="mermaid">                  Diagrams 拡張（UseAdvancedExtensions に含まれる）
+  // クラス判定はトークン完全一致にする。部分一致だと "mermaid-error" や
+  // "my-mermaid" のような無関係なクラスまで拾ってしまう。
+  var MERMAID_CODE_CLASS = /(^|\s)language-mermaid(\s|$)/;
+  var MERMAID_PRE_CLASS = /(^|\s)mermaid(\s|$)/;
+
+  // mermaid v10 は startOnLoad が既定 true のため、load 時に .mermaid 要素を自前で描いてしまう。
+  // 描画（テーマ追従・完了待ち・エラー表示）は viewer.js が担うので、変換より前・load より前に
+  // 必ず止める。viewer.js は defer 読込で DOMContentLoaded 前に走るため、load には先回りできる。
+  // ここを通らない（vendor 未読込・例外）場合は mermaid の自動描画がそのまま図を出す。
+  function suppressMermaidAutoRender() {
+    if (typeof mermaid === 'undefined') return;
+    mermaid.initialize({ startOnLoad: false });
+    // 旧 API の互換フラグも倒す（v10 の contentLoaded は両方を見る）。
+    mermaid.startOnLoad = false;
+  }
+
   function convertMermaidBlocks() {
     if (!article) return [];
+
+    // vendor 未読込なら pre のまま残す。ソースがコードブロックとして読める方が、
+    // 中央寄せのプレーンテキストになるより親切。
+    if (typeof mermaid === 'undefined') {
+      mermaidNodes = [];
+      return [];
+    }
 
     var pres = Array.prototype.slice.call(article.querySelectorAll('pre'));
     var mermaidDivs = [];
 
     pres.forEach(function (pre) {
       var code = pre.querySelector('code');
-      if (!code) return;
-      if (!/language-mermaid/.test(code.className || '')) return;
+      var isCodeForm = !!(code && MERMAID_CODE_CLASS.test(code.className || ''));
+      var isPreForm = MERMAID_PRE_CLASS.test(pre.className || '');
+      if (!isCodeForm && !isPreForm) return;
 
-      var source = code.textContent;
+      // mermaid の自動描画が先に走っていると中身は SVG で元ソースが無い。
+      // 壊さず素通しする（テーマ追従はしない）。suppressMermaidAutoRender が
+      // 効いていれば起きないが、防御として残す。
+      if (pre.getAttribute('data-processed') === 'true') {
+        if (window.console && console.warn) {
+          console.warn('[Hirake] mermaid が自動描画済みのため viewer.js の管理外です（テーマ追従しません）');
+        }
+        return;
+      }
+
+      // 両形に該当する場合（Markdig は出さない）は形 A として扱う。
+      var sourceEl = isCodeForm ? code : pre;
+      var source = sourceEl.textContent;
+      // 空図を render に渡して例外表示にしない。pre のまま残す。
+      if (source == null || source.trim() === '') return;
+
       var div = document.createElement('div');
       div.className = 'mermaid';
       div.textContent = source;
       // テーマ切替時の再描画に備え、元ソースを保持しておく。
       div._mdvMermaidSource = source;
       // ソースマップ属性を引き継ぐ（pre 置換で失われるため）。
-      // data-src-line は Markdig のコードブロックレンダラにより code 側に付く。
-      var srcLine = code.getAttribute('data-src-line') || pre.getAttribute('data-src-line');
+      // 形 A では Markdig のコードブロックレンダラにより code 側に、形 B では pre 側に付く。
+      var srcLine = (code && code.getAttribute('data-src-line')) || pre.getAttribute('data-src-line');
       if (srcLine) div.setAttribute('data-src-line', srcLine);
       pre.parentNode.replaceChild(div, pre);
       mermaidDivs.push(div);
@@ -668,34 +712,62 @@
     node.textContent = 'Mermaid の描画に失敗しました: ' + message;
   }
 
+  // 描画バッチの世代。テーマを素早く連続で切り替えると、前の世代の render() が後から
+  // 解決して古いテーマの SVG で上書きすることがある（Promise の完了順は保証されない）。
+  // 世代が進んだら前の世代の結果は DOM に反映せず、保留カウントにも数えない。
+  var mermaidRenderGeneration = 0;
+
   function renderMermaidNodes(nodes) {
     if (typeof mermaid === 'undefined' || !nodes || !nodes.length) return;
 
+    var generation = ++mermaidRenderGeneration;
+
+    // 描画対象を先に確定し、保留カウントを一括で立てる。ノードごとに増やすと、同期的に
+    // 完了する経路（旧同期 API・同期 thenable・render の同期例外）で 1 図目の完了時に
+    // pending が 1→0 になり、残りの図を待たずに「全描画完了」が通知されてしまう。
+    var jobs = [];
+    nodes.forEach(function (node) {
+      // 保持した元ソースを優先（再描画時は innerHTML が SVG に置換済みのため）。
+      var source = node._mdvMermaidSource != null ? node._mdvMermaidSource : node.textContent;
+      if (source == null) return;
+      jobs.push({ node: node, source: source });
+    });
+    // 前世代の未完了分は捨てる。以降の保留カウントはこの世代の分だけ。
+    mermaidPending = jobs.length;
+    if (!jobs.length) {
+      notifyMermaidSettled();
+      return;
+    }
+
     try {
       // テーマに追従（dark / default）。initialize は再描画のたびに呼んでよい。
+      // securityLevel は antiscript: click 記法（リンク）は有効のまま、ラベルの HTML は
+      // DOMPurify でサニタイズされる（loose はサニタイズ無し。第三者の .md を開く前提では
+      // ラベル経由のスクリプト実行を許してしまう）。
       mermaid.initialize({
         startOnLoad: false,
-        securityLevel: 'loose',
+        securityLevel: 'antiscript',
         theme: isDarkTheme() ? 'dark' : 'default'
       });
     } catch (err) {
       // initialize に失敗しても個別描画は試みる。
     }
 
-    nodes.forEach(function (node) {
-      // 保持した元ソースを優先（再描画時は innerHTML が SVG に置換済みのため）。
-      var source = node._mdvMermaidSource != null ? node._mdvMermaidSource : node.textContent;
-      if (source == null) return;
+    jobs.forEach(function (job) {
+      var node = job.node;
+      var source = job.source;
 
       // 再描画に備えてエラー状態をリセットする。
       node.className = 'mermaid';
 
       var renderId = 'mdv-mermaid-' + (mermaidIdCounter++);
-      mermaidPending++;
       var settled = false;
+      var isCurrent = function () { return generation === mermaidRenderGeneration; };
       var settle = function () {
         if (settled) return;
         settled = true;
+        // 古い世代の完了は、新しい世代の保留カウントを狂わせないよう無視する。
+        if (!isCurrent()) return;
         mermaidPending--;
         if (mermaidPending <= 0) {
           mermaidPending = 0;
@@ -709,11 +781,11 @@
         if (maybePromise && typeof maybePromise.then === 'function') {
           maybePromise.then(
             function (result) {
-              applyMermaidResult(node, result);
+              if (isCurrent()) applyMermaidResult(node, result);
               settle();
             },
             function (err) {
-              showMermaidError(node, err);
+              if (isCurrent()) showMermaidError(node, err);
               settle();
             }
           );
@@ -746,7 +818,7 @@
    * ========================================================== */
 
   // article 内の <a> クリックを委譲リスナーで捕捉する。mermaid の click 記法
-  // （securityLevel: 'loose'）が SVG 内に生成する <a> も、本文の通常リンクも
+  // （securityLevel: 'antiscript'）が SVG 内に生成する <a> も、本文の通常リンクも
   // 同じ経路を通る。テーマ切替の再描画で SVG が作り直されても委譲なので
   // バインドし直しは不要。
   //
@@ -1361,7 +1433,11 @@
    * ========================================================== */
 
   function init() {
-    // 1. コードブロック中の mermaid 指定を div に変換する（構造変更）。
+    // 0. mermaid の自動描画（startOnLoad）を止める。1 の変換より前・load より前が必須。
+    //    ここが後ろに回ると load 時に mermaid が図を描き、viewer.js の再描画経路と二重になる。
+    safeRun(suppressMermaidAutoRender);
+
+    // 1. mermaid ブロック（pre.mermaid / pre>code.language-mermaid）を div に変換する（構造変更）。
     //    変換結果はモジュール側 mermaidNodes に記録される（テーマ切替で再利用）。
     safeRun(function () {
       convertMermaidBlocks();
