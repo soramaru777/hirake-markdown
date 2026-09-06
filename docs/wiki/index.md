@@ -26,6 +26,7 @@
 | [hirake-build.md](hirake-build.md) | ビルドコマンドと動作要件 |
 | [hirake-canvas-harness.md](hirake-canvas-harness.md) | キャンバス描画を CDP で検証するハーネス。使い方・割り切り・既知の罠 |
 | [hirake-shell-harness.md](hirake-shell-harness.md) | WPF シェル（ツールバー・タブ・二重起動）を UI Automation で検証するハーネス。見える物／見えない物 |
+| [hirake-viewer-harness.md](hirake-viewer-harness.md) | 文書タブ（viewer.js）の描画を CDP で検証するハーネス。Case-105（mermaid のテーマ追従）が何を見ているか |
 | [hirake-data-paths.md](hirake-data-paths.md) | `%LocalAppData%` 配下のデータ配置と `HIRAKE_DATA_ROOT` による差し替え |
 | [hirake-shortcuts.md](hirake-shortcuts.md) | キーボードショートカット一覧 |
 | [hirake-third-party.md](hirake-third-party.md) | MIT と同梱ライブラリのライセンス |

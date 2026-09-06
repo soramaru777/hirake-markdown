@@ -6,9 +6,10 @@ scope: shared
 sources:
   - README.md
   - https://github.com/soramaru777/hirake-markdown/issues/84
-related: [[hirake-overview]] [[hirake-shortcuts]] [[hirake-knowledge-exploration]] [[hirake-wikilinks]] [[hirake-external-editor]]
+  - https://github.com/soramaru777/hirake-markdown/issues/105
+related: [[hirake-overview]] [[hirake-shortcuts]] [[hirake-knowledge-exploration]] [[hirake-wikilinks]] [[hirake-external-editor]] [[hirake-viewer-harness]]
 confidence: high
-updated: 2026-08-21
+updated: 2026-09-06
 ---
 
 Hirake の「Markdown を表示する」側の機能一覧。知識ベース探索の機能は [[hirake-knowledge-exploration]] に分けてある。
@@ -17,7 +18,8 @@ Hirake の「Markdown を表示する」側の機能一覧。知識ベース探�
 
 - **タブ表示** — 複数ファイルをタブで切り替える
 - **シンタックスハイライト** — highlight.js（GitHub テーマ）
-- **mermaid 図の描画** — mermaid コードブロックを図にする
+- **mermaid 図の描画** — mermaid コードブロックを図にする。描くのは `viewer.js`（mermaid 自身の自動描画 `startOnLoad` は起動時に止める）で、テーマ切替のたびに保持した元ソースから描き直す。Markdig は mermaid ブロックを `<pre class="mermaid">`（Diagrams 拡張）で出すが、通常コードブロックの `<pre><code class="language-mermaid">` 形も同じ経路で受理する。click 記法と描画完了待ち（スクロール復元）もこの経路に乗っている。`securityLevel` は `antiscript`（click 記法のリンクは有効、ラベルの HTML は DOMPurify でサニタイズ、`javascript:` リンクは無害化）。第三者の `.md` を開く前提なので、サニタイズ無しの `loose` は使わない
+  > 2026-09-06 まで: `viewer.js` は `<pre><code class="language-mermaid">` 形しか拾っておらず、Markdig が実際に出す `<pre class="mermaid">` は mermaid の自動描画が初回テーマ固定で描いていた。テーマを切り替えても図だけライト配色のまま残る（ISSUE #105）。また `viewer.js` 側は `securityLevel: 'loose'` を指定していた（#11 の click 記法のため）が、自動描画に代わったことで実際には mermaid 既定の `strict` で描かれていた。#105 の修正で viewer.js 経路が復活するため、同時に `antiscript` へ変えた。回帰は [[hirake-viewer-harness]] の Case-105 が固定している
 - **KaTeX 数式** — `$...$` / `$$...$$`
 - **目次（TOC）** — 見出しから自動生成し、サイドバーから各見出しへジャンプ
 - **フロントマターカード + メタ情報バー** — YAML フロントマターをカード表示、文字数・読了目安・更新日時をバーに表示

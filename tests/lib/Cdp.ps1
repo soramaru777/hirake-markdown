@@ -35,7 +35,7 @@ function Connect-Cdp {
     $socket = New-Object System.Net.WebSockets.ClientWebSocket
     $cts = New-Object System.Threading.CancellationTokenSource ([TimeSpan]::FromSeconds($TimeoutSec))
     try {
-        $socket.ConnectAsync([Uri]$WebSocketUrl, $cts.Token).GetAwaiter().GetResult()
+        [void]$socket.ConnectAsync([Uri]$WebSocketUrl, $cts.Token).GetAwaiter().GetResult()
     } catch {
         $socket.Dispose()
         throw "CDP へ接続できません: $WebSocketUrl / $($_.Exception.Message)"
@@ -59,7 +59,7 @@ function Disconnect-Cdp {
         if ($Session.Socket.State -eq [System.Net.WebSockets.WebSocketState]::Open) {
             $cts = New-Object System.Threading.CancellationTokenSource ([TimeSpan]::FromSeconds(3))
             try {
-                $Session.Socket.CloseAsync(
+                [void]$Session.Socket.CloseAsync(
                     [System.Net.WebSockets.WebSocketCloseStatus]::NormalClosure,
                     'bye', $cts.Token).GetAwaiter().GetResult()
             } finally {
@@ -134,7 +134,7 @@ function Invoke-CdpCommand {
     try {
         $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
         $segment = New-Object System.ArraySegment[byte] (, $bytes)
-        $Session.Socket.SendAsync(
+        [void]$Session.Socket.SendAsync(
             $segment,
             [System.Net.WebSockets.WebSocketMessageType]::Text,
             $true,
