@@ -6,9 +6,11 @@ scope: shared
 sources:
   - README.md
   - https://github.com/soramaru777/hirake-markdown/issues/84
-related: [[hirake-overview]] [[hirake-shortcuts]] [[hirake-knowledge-exploration]] [[hirake-wikilinks]] [[hirake-external-editor]]
+  - https://github.com/soramaru777/hirake-markdown/issues/105
+  - https://github.com/soramaru777/hirake-markdown/issues/107
+related: [[hirake-overview]] [[hirake-shortcuts]] [[hirake-knowledge-exploration]] [[hirake-wikilinks]] [[hirake-external-editor]] [[hirake-viewer-harness]]
 confidence: high
-updated: 2026-08-21
+updated: 2026-09-19
 ---
 
 Hirake の「Markdown を表示する」側の機能一覧。知識ベース探索の機能は [[hirake-knowledge-exploration]] に分けてある。
@@ -17,7 +19,8 @@ Hirake の「Markdown を表示する」側の機能一覧。知識ベース探�
 
 - **タブ表示** — 複数ファイルをタブで切り替える
 - **シンタックスハイライト** — highlight.js（GitHub テーマ）
-- **mermaid 図の描画** — mermaid コードブロックを図にする
+- **mermaid 図の描画** — mermaid コードブロックを図にする。描くのは `viewer.js`（mermaid 自身の自動描画 `startOnLoad` は起動時に止める）で、テーマ切替のたびに保持した元ソースから描き直す。Markdig は mermaid ブロックを `<pre class="mermaid">`（Diagrams 拡張）で出すが、通常コードブロックの `<pre><code class="language-mermaid">` 形も同じ経路で受理する。click 記法と描画完了待ち（スクロール復元）もこの経路に乗っている。`securityLevel` は `antiscript`（click 記法のリンクは有効、ラベルの HTML は DOMPurify でサニタイズ、`javascript:` リンクは無害化）。第三者の `.md` を開く前提なので、サニタイズ無しの `loose` は使わない
+  > 2026-09-06 まで: `viewer.js` は `<pre><code class="language-mermaid">` 形しか拾っておらず、Markdig が実際に出す `<pre class="mermaid">` は mermaid の自動描画が初回テーマ固定で描いていた。テーマを切り替えても図だけライト配色のまま残る（ISSUE #105）。また `viewer.js` 側は `securityLevel: 'loose'` を指定していた（#11 の click 記法のため）が、自動描画に代わったことで実際には mermaid 既定の `strict` で描かれていた。#105 の修正で viewer.js 経路が復活するため、同時に `antiscript` へ変えた。回帰は [[hirake-viewer-harness]] の Case-105 が固定している
 - **KaTeX 数式** — `$...$` / `$$...$$`
 - **目次（TOC）** — 見出しから自動生成し、サイドバーから各見出しへジャンプ
 - **フロントマターカード + メタ情報バー** — YAML フロントマターをカード表示、文字数・読了目安・更新日時をバーに表示
@@ -37,6 +40,10 @@ Hirake の「Markdown を表示する」側の機能一覧。知識ベース探�
 - **PDF エクスポート（Ctrl+Shift+E）**
 
   **画面のズーム倍率がそのまま出力倍率になる。** 1 ページに詰めたいときはズームアウトしてから書き出す。有効範囲は 10%〜200% で、これを超えるズームは 200% として出力される。
+
+  **用紙は A4 縦で固定。** `PrintToPdfAsync` は OS やプリンタの既定用紙を見ず、WebView2 の既定（US Letter）で出すため、コード側で A4 を明示している。印刷（Ctrl+P）の用紙は印刷ダイアログ側の設定で決まり、この固定の対象外。例外として、WebView2 ランタイムが印刷設定を受け付けなかった場合は既定設定での書き出しへ落ち、そのときだけ US Letter・倍率 100% になる（書き出し自体を失敗させないための最終手段。意図した現状維持）。
+
+  > 2026-09-19 まで: 用紙を指定しておらず、日本語 Windows でも US Letter（612 x 792 pt）で出力されていた（ISSUE #107。修正後の実測は 594.96 x 841.92 pt）
 
 - **印刷（Ctrl+P）** — プレビュー付き
 

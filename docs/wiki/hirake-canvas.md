@@ -8,7 +8,7 @@ sources:
   - https://github.com/soramaru777/hirake-markdown/issues/89
   - https://github.com/soramaru777/hirake-markdown/issues/90
   - https://github.com/soramaru777/hirake-markdown/issues/93
-related: [[hirake-knowledge-exploration]] [[hirake-workspaces]] [[hirake-overview]]
+related: [[hirake-knowledge-exploration]] [[hirake-workspaces]] [[hirake-overview]] [[hirake-canvas-harness]]
 confidence: high
 updated: 2026-08-23
 ---

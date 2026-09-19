@@ -8,7 +8,9 @@ Hirake は Windows 用の Markdown ビューア（表示専用、編集機能な
 
 ## ビルドコマンド
 
-.NET 10 SDK が必要。テストプロジェクトは存在しない（検証は `testdata/` を使った実機確認）。
+.NET 10 SDK が必要。`dotnet test` のテストプロジェクトは無く、検証は `tests/` の PowerShell に置いている
+（`tests/*.ps1` は CLI で完結。`tests/canvas` は WebView2 の中を CDP で、`tests/shell` は WPF 側を
+UI Automation で見る。後者 2 つは GUI を起動するので CI では `continue-on-error`）。
 
 ```powershell
 # ビルド

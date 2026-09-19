@@ -487,8 +487,15 @@ public class DocumentTab : IDisposable
     private const double MinPrintScale = 0.1;
     private const double MaxPrintScale = 2.0;
 
+    // PDF の用紙サイズ。CoreWebView2PrintSettings の PageWidth / PageHeight は
+    // インチ単位で、既定は US Letter (8.5 x 11)。PrintToPdfAsync は OS や
+    // プリンタの既定用紙を見ないため、A4 (210 x 297 mm) を明示する（ISSUE #107）。
+    private const double MillimetersPerInch = 25.4;
+    private const double A4WidthInches = 210.0 / MillimetersPerInch;
+    private const double A4HeightInches = 297.0 / MillimetersPerInch;
+
     /// <summary>
-    /// 現在のページを PDF ファイルへ書き出す。成功で true。
+    /// 現在のページを PDF ファイルへ書き出す。成功で true。用紙は A4 縦で固定。
     /// 画面のズーム倍率をそのまま出力倍率（ScaleFactor）として適用する
     /// （Chromium の印刷レイアウトは既定ではズームを反映しないため明示的に渡す）。
     /// </summary>
@@ -508,11 +515,14 @@ public class DocumentTab : IDisposable
             try
             {
                 settings = core.Environment.CreatePrintSettings();
+                settings.PageWidth = A4WidthInches;
+                settings.PageHeight = A4HeightInches;
                 settings.ScaleFactor = Math.Clamp(WebView.ZoomFactor, MinPrintScale, MaxPrintScale);
             }
             catch
             {
-                // 印刷設定を作れない場合は既定倍率で出力する（PDF 出力自体は継続）。
+                // 印刷設定を作れない場合は既定の倍率・用紙（US Letter）で出力する
+                //（PDF 出力自体は継続）。
                 settings = null;
             }
 
@@ -529,6 +539,7 @@ public class DocumentTab : IDisposable
                 }
             }
 
+            // この経路は用紙サイズを渡せないため、US Letter で出力される。
             return await core.PrintToPdfAsync(path, null).ConfigureAwait(true);
         }
         catch

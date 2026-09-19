@@ -187,3 +187,46 @@
   - 残したのは判断の理由の側。固定値にできないのはピン留めが任意座標に置けるから、
     下限を上げ直さないのは d3-zoom が現在の視点を再クランプしないから、
     ノードの輪郭を CSS で固定するのは `nodeRadius` が描画以外にも使われているから
+
+2026-08-25 add - #94 の実装で `hirake-canvas-harness.md` を新規作成し、`hirake-data-paths.md` に
+  「起点を差し替える（HIRAKE_DATA_ROOT）」を追加。
+  - #89 / #90 は目視でしか確認できず、確認条件も毎回その場で用意していた。条件（testdata）と
+    手順（PowerShell + 自前 CDP クライアント）を固定資産にして、次に壊れたときに気づけるようにした
+  - `hirake-data-paths.md` は「すべて %LocalAppData% 配下」と書いていたが、環境変数で起点を
+    差し替えられるようになったので事実が変わった。相対パスを弾く理由（fail-safe）まで残した
+  - 隔離が一番の危険どころなので、`hirake-canvas.md`（ピン留めはアプリ全体で共有）と
+    ハーネス側を相互にリンクした
+
+2026-08-26 add - #96 の実装で `hirake-shell-harness.md` を新規作成し、`hirake-canvas-harness.md`
+  から相互にリンク。
+  - WebView2 の中は CDP で見られるが、**WPF シェル側は CDP から一切触れない**。#86（ツールバーの
+    並びが崩れた）は publish を触るまで気づけなかった手戻りで、UIA のツリーなら PR の時点で分かった
+  - このページの一番の役目は**見えない物を書くこと**。UIA は描画順（paint order）を公開しないので、
+    #90 の重なりと #89 の SVG ノード位置は原理的に観測できない。担当は CDP 側のまま
+  - ハーネスが 2 つになったので `Assert.ps1` / `Cdp.ps1` / `HirakeHost.ps1` を `tests/lib/` へ移した。
+    シェル側から `canvas/lib` を読むのは依存の向きとして逆になる
+  - 二重起動判定（Mutex / パイプ）は名前が固定で `HIRAKE_DATA_ROOT` と無関係。パス転送を
+    検証できる根拠であると同時に、2 つのハーネスを並列に走らせられない制約でもある
+
+2026-08-26 update - #100 の実装で `hirake-canvas-harness.md` の「データを汚さないための隔離」
+  にある起動前ゲートの説明を、サイズ推定から**束ねヘッダの位置**へ書き換えた。
+  - 従来は「マーカーが無くて 4MB 以下なら起動役（apphost）と見なす」と書いていた。これは
+    **推定**であって、`PublishSingleFile=true` + `SelfContained=false` なら 4MB 以下の
+    単一ファイル exe を作れる以上、言い切れていなかった
+  - 実測で分かったのは、**BundleSignature は通常の apphost にも同じ位置に入っている**こと
+    （offset 151360）。区別できるのは束ね処理が書き込む直前 8 バイトの値で、
+    apphost=0 / 単一ファイル=28679671
+  - 旧記述は「> 2026-08-26 まで: …」の形で残した。次に読む人が「なぜサイズを見ていたのか」
+    ではなく「なぜサイズをやめたのか」を追えるようにするため
+
+2026-09-06 update — ISSUE #105（テーマ切替で mermaid 図が再描画されない）の実装に合わせて更新。
+  - 新規 `hirake-viewer-harness.md`。文書タブ（viewer.js）側の CDP ケースは canvas / shell のどちらにも収まらないため
+  - 更新 `hirake-viewer-features.md`（mermaid の描画経路と、2026-09-06 までの不具合を「> まで:」で残す）、
+    `hirake-canvas-harness.md`（viewer-harness への相互リンク、既知の罠に pwsh 7.6 の VoidTaskResult 問題を追加）、`index.md`
+  - 判断: **Hirake 実機でのハーネス実走は未実施**（実装時に Hirake が起動中で二重起動の制約に掛かった）。
+    代わりに同じ DOM 形を headless Edge に載せて修正前 FAIL / 修正後 PASS を確認した。viewer-harness は confidence: medium のまま
+
+2026-09-19 update — ISSUE #107（PDF エクスポートが US Letter になる）の実装に合わせて更新。
+  - 更新 `hirake-viewer-features.md`（PDF エクスポートの用紙は A4 縦で固定。旧挙動は「> まで:」で残す）
+  - 判断: 用紙の選択式（OS の既定用紙への追従・設定項目）は見送り。要望が出たら別 ISSUE にする
+  - 実測: 実 UI 経路（shortcut → 保存ダイアログ → ExportPdfAsync）で修正前 612 x 792 pt / 修正後 594.96 x 841.92 pt。ズーム 100% = 5 ページ / 150% = 7 ページ（どちらも A4）で、ScaleFactor の経路が変わっていないことも確認

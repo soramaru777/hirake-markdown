@@ -20,16 +20,21 @@ namespace Hirake;
 /// - ディレクトリの作成は行わない。参照しただけで空フォルダができる挙動にしない
 ///   （必要になった時点で利用側が <c>Directory.CreateDirectory</c> する。現行と同じ）
 /// - 実行中に変わる値ではないため、静的に 1 度だけ確定させる
+/// - 起点だけは環境変数 <c>HIRAKE_DATA_ROOT</c> で差し替えられる（ISSUE #94）。
+///   キャンバスの検証ハーネスが実利用の設定・ピン留め・WebView2 プロファイルを
+///   汚さずに動くために要る。派生プロパティは <see cref="Root"/> からの合成のままで、
+///   1 か所だけ差し替えれば全体が追随する
 /// </summary>
 public static class AppPaths
 {
     private const string AppFolderName = "Hirake";
 
+    /// <summary>データ領域の起点を差し替える環境変数名（絶対パスのみ受理）。</summary>
+    private const string DataRootVariable = "HIRAKE_DATA_ROOT";
+
     static AppPaths()
     {
-        Root = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            AppFolderName);
+        Root = ResolveRoot();
 
         SettingsFile = Path.Combine(Root, "settings.json");
         WorkspacesFile = Path.Combine(Root, "workspaces.json");
@@ -48,7 +53,56 @@ public static class AppPaths
         LogsDir = Path.Combine(Root, "logs");
     }
 
-    /// <summary>データ領域の起点（<c>%LocalAppData%\Hirake</c>）。</summary>
+    /// <summary>
+    /// データ領域の起点を決める。
+    ///
+    /// 既定は <c>%LocalAppData%\Hirake</c>。環境変数 <c>HIRAKE_DATA_ROOT</c> に
+    /// 絶対パスが入っているときだけ、そちらを起点にする（ISSUE #94 の検証ハーネス用）。
+    ///
+    /// 絶対パス以外（未設定・空・空白のみ・相対パス）は黙って既定へ倒す。
+    /// 壊れた環境変数で、カレントディレクトリ配下など予期しない場所へ
+    /// 利用者のデータを散らかす方が害が大きいため、ここは fail-safe にする。
+    /// </summary>
+    private static string ResolveRoot()
+    {
+        string? custom = null;
+        try
+        {
+            custom = Environment.GetEnvironmentVariable(DataRootVariable);
+        }
+        catch (System.Security.SecurityException)
+        {
+            // 環境変数を読めない構成。既定へ倒す。
+        }
+
+        if (!string.IsNullOrWhiteSpace(custom) && Path.IsPathFullyQualified(custom))
+        {
+            try
+            {
+                // 末尾のセパレータは落とす。Root は表示にも比較にも使うため、
+                // 同じ場所が 2 通りの文字列で現れないようにしておく
+                // （Path.Combine は二重区切りを作らないので派生側の実害は無いが、
+                //   ドライブ直下は TrimEndingDirectorySeparator が保持する）。
+                return Path.TrimEndingDirectorySeparator(Path.GetFullPath(custom));
+            }
+            catch (ArgumentException)
+            {
+                // 不正な文字などで正規化できない。既定へ倒す。
+            }
+            catch (NotSupportedException)
+            {
+            }
+            catch (PathTooLongException)
+            {
+            }
+        }
+
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            AppFolderName);
+    }
+
+    /// <summary>データ領域の起点（既定は <c>%LocalAppData%\Hirake</c>）。</summary>
     public static string Root { get; }
 
     /// <summary>設定ファイル。</summary>
