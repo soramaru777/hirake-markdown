@@ -7,9 +7,10 @@ sources:
   - README.md
   - https://github.com/soramaru777/hirake-markdown/issues/84
   - https://github.com/soramaru777/hirake-markdown/issues/105
+  - https://github.com/soramaru777/hirake-markdown/issues/107
 related: [[hirake-overview]] [[hirake-shortcuts]] [[hirake-knowledge-exploration]] [[hirake-wikilinks]] [[hirake-external-editor]] [[hirake-viewer-harness]]
 confidence: high
-updated: 2026-09-06
+updated: 2026-09-19
 ---
 
 Hirake の「Markdown を表示する」側の機能一覧。知識ベース探索の機能は [[hirake-knowledge-exploration]] に分けてある。
@@ -39,6 +40,10 @@ Hirake の「Markdown を表示する」側の機能一覧。知識ベース探�
 - **PDF エクスポート（Ctrl+Shift+E）**
 
   **画面のズーム倍率がそのまま出力倍率になる。** 1 ページに詰めたいときはズームアウトしてから書き出す。有効範囲は 10%〜200% で、これを超えるズームは 200% として出力される。
+
+  **用紙は A4 縦で固定。** `PrintToPdfAsync` は OS やプリンタの既定用紙を見ず、WebView2 の既定（US Letter）で出すため、コード側で A4 を明示している。印刷（Ctrl+P）の用紙は印刷ダイアログ側の設定で決まり、この固定の対象外。例外として、WebView2 ランタイムが印刷設定を受け付けなかった場合は既定設定での書き出しへ落ち、そのときだけ US Letter・倍率 100% になる（書き出し自体を失敗させないための最終手段。意図した現状維持）。
+
+  > 2026-09-19 まで: 用紙を指定しておらず、日本語 Windows でも US Letter（612 x 792 pt）で出力されていた（ISSUE #107。修正後の実測は 594.96 x 841.92 pt）
 
 - **印刷（Ctrl+P）** — プレビュー付き
 

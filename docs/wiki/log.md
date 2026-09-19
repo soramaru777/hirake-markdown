@@ -225,3 +225,8 @@
     `hirake-canvas-harness.md`（viewer-harness への相互リンク、既知の罠に pwsh 7.6 の VoidTaskResult 問題を追加）、`index.md`
   - 判断: **Hirake 実機でのハーネス実走は未実施**（実装時に Hirake が起動中で二重起動の制約に掛かった）。
     代わりに同じ DOM 形を headless Edge に載せて修正前 FAIL / 修正後 PASS を確認した。viewer-harness は confidence: medium のまま
+
+2026-09-19 update — ISSUE #107（PDF エクスポートが US Letter になる）の実装に合わせて更新。
+  - 更新 `hirake-viewer-features.md`（PDF エクスポートの用紙は A4 縦で固定。旧挙動は「> まで:」で残す）
+  - 判断: 用紙の選択式（OS の既定用紙への追従・設定項目）は見送り。要望が出たら別 ISSUE にする
+  - 実測: 実 UI 経路（shortcut → 保存ダイアログ → ExportPdfAsync）で修正前 612 x 792 pt / 修正後 594.96 x 841.92 pt。ズーム 100% = 5 ページ / 150% = 7 ページ（どちらも A4）で、ScaleFactor の経路が変わっていないことも確認
